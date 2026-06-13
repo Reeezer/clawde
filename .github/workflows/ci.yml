@@ -7,7 +7,7 @@ on:
 
 jobs:
   check:
-    name: lint · type · test
+    name: lint-type-test
     strategy:
       fail-fast: false
       matrix:

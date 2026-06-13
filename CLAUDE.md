@@ -82,11 +82,28 @@ usable as a library, independent of the terminal UI.
   provider key — deselected by default, run in CI where keys live.
 - **100% coverage is the floor, not the goal** — cover behaviour, not lines.
 
-## Branching model (Gitflow)
+## Commit & branch conventions
 
-`main` (protected, releases only) ← `release/*` / `hotfix/*`; `develop`
-(integration) ← `feature/*`. `gitflow-guard.yml` enforces branch names + PR base.
+**Branches (Gitflow):** `main` (protected, releases only) ← `release/*` /
+`hotfix/*`; `develop` (integration) ← `feature/*`. Names must match `main`,
+`develop`, or `(feature|release|hotfix|nightly)/<slug>`.
 → [ADR-0002](docs/adr/0002-gitflow-branching-strategy.md)
+
+**Commits (Conventional Commits):** `<type>(<optional scope>): <description>`,
+subject ≤ 72 chars. Types: `feat fix refactor docs test chore perf ci build style
+revert`. Merge / `Revert` / `fixup!` / `squash!` commits are exempt.
+
+**Three layers enforce this:**
+
+- `commit-msg` hook → `scripts/check_commit_msg.py` (message format).
+- `pre-push` hook → `scripts/check_branch_name.py` (branch name).
+- CI `gitflow-guard.yml` (branch name + PR base) **and** GitHub branch protection
+  on `main` (PR required, admins included, no force-push/delete) and `develop`
+  (CI on PRs, no force-push/delete).
+
+`uv run pre-commit install` registers all three hook types (pre-commit,
+commit-msg, pre-push) via `default_install_hook_types`. Re-apply branch
+protection with `bash docs/setup-gitflow.sh <owner/repo>`.
 
 ## Design discipline
 
@@ -102,3 +119,4 @@ the design that won't need redoing.
 - Don't let coverage drop below 100%, or commit with red ruff / mypy.
 - Don't pass ad-hoc dicts across stage boundaries — add a typed model.
 - Don't special-case one provider/tool in the loop — fix the abstraction.
+- Don't bypass the commit-msg / branch-name hooks with `--no-verify`.

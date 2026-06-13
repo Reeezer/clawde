@@ -1,4 +1,8 @@
 # Pre-commit hooks for clawde. Install once: uv run pre-commit install
+# `pre-commit install` registers the pre-commit, commit-msg, and pre-push hooks.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -36,3 +40,18 @@ repos:
         language: system
         pass_filenames: false
         files: ^packages/cli/
+
+      # Convention gates (regex). commit-msg validates the message; pre-push
+      # validates the branch name. CI (gitflow-guard.yml) re-checks both server-side.
+      - id: commit-msg-conventional
+        name: commit message (Conventional Commits)
+        entry: uv run python scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
+      - id: branch-name-gitflow
+        name: branch name (Gitflow)
+        entry: uv run python scripts/check_branch_name.py
+        language: system
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false

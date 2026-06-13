@@ -10,6 +10,15 @@ dev-dependencies = [
     "pre-commit>=4.0",
 ]
 
+# Ruff config for repo-root files (e.g. scripts/) that sit outside the package
+# trees. Each package carries its own [tool.ruff]; ruff uses the nearest one.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
 # Workspace-level mypy config — used when mypy is invoked from the repo root
 # (e.g. `uv run mypy packages/core/src packages/cli/src`). Each package also
 # carries its own [tool.mypy] for per-package invocation.
