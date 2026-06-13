@@ -1,0 +1,38 @@
+# Pre-commit hooks for clawde. Install once: uv run pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Local gates: the 100%-coverage pytest suites run on commit, per package,
+  # exactly as CI invokes them. mypy stays a CI gate (kept off the commit path
+  # to keep commits fast). Single commands invoked directly (no shell) so they
+  # work on Windows without Git Bash / WSL.
+  - repo: local
+    hooks:
+      - id: pytest-core
+        name: pytest (core, 100% coverage gate)
+        entry: uv run --directory packages/core pytest -q
+        language: system
+        pass_filenames: false
+        files: ^packages/core/
+      - id: pytest-cli
+        name: pytest (cli, 100% coverage gate)
+        entry: uv run --directory packages/cli pytest -q
+        language: system
+        pass_filenames: false
+        files: ^packages/cli/

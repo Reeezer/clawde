@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+wheels/
+*.egg-info/
+.eggs/
+
+# Virtual environments (uv.lock IS committed — reproducible installs)
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+
+# Type / lint caches
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+
+# Secrets
+.env
+*.pem
+*.key
+**/*credentials*
+
+# clawde local state (sessions, logs) lives outside the repo by default;
+# ignore any local scratch dropped in-tree.
+.clawde/
+data/
+*.log
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local Claude Code session files (rules/ is committed if added)
+.claude/settings.local.json
+.claude/projects/

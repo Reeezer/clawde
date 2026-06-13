@@ -1,0 +1,64 @@
+name: Gitflow Guard
+
+# Validates two Gitflow invariants:
+#   1. Branch names follow the convention (feature|release|hotfix|nightly)/<slug>
+#   2. PRs target the correct base branch for their type
+
+on:
+  push:
+    branches-ignore: [main, develop]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  branch-name:
+    name: Branch naming
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch name
+        run: |
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          echo "Branch: $BRANCH"
+          if echo "$BRANCH" | grep -qE '^(feature|release|hotfix|nightly)/.+$'; then
+            echo "OK '$BRANCH' follows Gitflow convention"
+          else
+            echo "FAIL '$BRANCH' does not follow Gitflow convention."
+            echo ""
+            echo "  Allowed prefixes:"
+            echo "    feature/<name>     — new feature; from develop, merge to develop"
+            echo "    release/<version>  — release prep; from develop, merge to main + develop"
+            echo "    hotfix/<name>      — urgent fix; from main, merge to main + develop"
+            echo "    nightly/<slug>     — automated overnight PR; targets develop"
+            exit 1
+          fi
+
+  pr-base:
+    name: PR base branch
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate PR base branch
+        run: |
+          HEAD="${{ github.head_ref }}"
+          BASE="${{ github.base_ref }}"
+          echo "PR: $HEAD -> $BASE"
+
+          if echo "$HEAD" | grep -qE '^(feature|nightly)/'; then
+            if [ "$BASE" != "develop" ]; then
+              echo "FAIL '$HEAD' must target 'develop', got '$BASE'"
+              exit 1
+            fi
+          elif echo "$HEAD" | grep -qE '^hotfix/'; then
+            if [ "$BASE" != "main" ]; then
+              echo "FAIL '$HEAD' must target 'main', got '$BASE'"
+              echo "  After merging to main, open a second PR main -> develop to backport."
+              exit 1
+            fi
+          elif echo "$HEAD" | grep -qE '^release/'; then
+            if [ "$BASE" != "main" ] && [ "$BASE" != "develop" ]; then
+              echo "FAIL '$HEAD' must target 'main' or 'develop', got '$BASE'"
+              exit 1
+            fi
+          fi
+
+          echo "OK '$HEAD' -> '$BASE' is a valid Gitflow PR target"

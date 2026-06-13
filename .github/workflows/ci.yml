@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  check:
+    name: lint · type · test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      # ---- core ----
+      - name: Ruff (core)
+        run: uv run --directory packages/core ruff check .
+      - name: Ruff format (core)
+        run: uv run --directory packages/core ruff format --check .
+      - name: Mypy (core)
+        run: uv run --directory packages/core mypy
+      - name: Tests (core, 100% coverage gate)
+        run: uv run --directory packages/core pytest -q
+
+      # ---- cli ----
+      - name: Ruff (cli)
+        run: uv run --directory packages/cli ruff check .
+      - name: Ruff format (cli)
+        run: uv run --directory packages/cli ruff format --check .
+      - name: Mypy (cli)
+        run: uv run --directory packages/cli mypy
+      - name: Tests (cli, 100% coverage gate)
+        run: uv run --directory packages/cli pytest -q

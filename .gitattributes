@@ -1,0 +1,9 @@
+# LF everywhere — overrides core.autocrlf on Windows. See CLAUDE.md "Tooling".
+* text=auto eol=lf
+
+# Binary assets — never normalize.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary

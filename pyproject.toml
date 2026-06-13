@@ -1,0 +1,21 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+
+# Workspace-wide dev tooling. Members inherit nothing from this file other than
+# workspace membership; each member declares its own runtime deps and its own
+# ruff / mypy / pytest config so `uv run --directory packages/<x> <tool>` works
+# per package — exactly how CI and the pre-commit gates invoke them.
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0",
+]
+
+# Workspace-level mypy config — used when mypy is invoked from the repo root
+# (e.g. `uv run mypy packages/core/src packages/cli/src`). Each package also
+# carries its own [tool.mypy] for per-package invocation.
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+disallow_untyped_decorators = false
