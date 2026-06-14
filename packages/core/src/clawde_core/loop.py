@@ -74,15 +74,21 @@ class Agent:
         user_input: str,
         on_text: Callable[[str], None],
         on_tool_call: Callable[[ToolCall], None] | None = None,
+        on_tool_result: Callable[[ToolResult], None] | None = None,
+        on_usage: Callable[[Usage], None] | None = None,
         *,
         images: tuple[ImageContent, ...] = (),
     ) -> Turn:
-        """Drive one turn, streaming text deltas to ``on_text`` as they arrive and
-        announcing each tool call to ``on_tool_call`` before it runs."""
+        """Drive one turn, streaming text deltas to ``on_text`` as they arrive,
+        announcing each tool call to ``on_tool_call`` before it runs, each
+        :class:`ToolResult` to ``on_tool_result`` once it has, and the running
+        :class:`Usage` to ``on_usage`` after each model call."""
         return self._drive(
             user_input,
             lambda: self._stream_completion(on_text),
             on_tool_call=on_tool_call,
+            on_tool_result=on_tool_result,
+            on_usage=on_usage,
             images=images,
         )
 
@@ -91,6 +97,8 @@ class Agent:
         user_input: str,
         next_completion: Callable[[], Completion],
         on_tool_call: Callable[[ToolCall], None] | None = None,
+        on_tool_result: Callable[[ToolResult], None] | None = None,
+        on_usage: Callable[[Usage], None] | None = None,
         *,
         images: tuple[ImageContent, ...] = (),
     ) -> Turn:
@@ -100,6 +108,8 @@ class Agent:
         for _ in range(self._max_iterations):
             completion = next_completion()
             usage += completion.usage
+            if on_usage is not None:
+                on_usage(usage)
             self._history.append(
                 Message.assistant(content=completion.text, tool_calls=completion.tool_calls)
             )
@@ -113,6 +123,8 @@ class Agent:
                 if on_tool_call is not None:
                     on_tool_call(call)
                 result = self._execute(call)
+                if on_tool_result is not None:
+                    on_tool_result(result)
                 self._history.append(
                     Message.tool(
                         tool_call_id=result.tool_call_id, content=result.content, name=call.name

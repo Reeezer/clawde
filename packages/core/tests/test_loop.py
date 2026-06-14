@@ -215,6 +215,45 @@ def test_stream_turn_announces_tool_calls() -> None:
     assert turn.final_text == "done"
 
 
+def test_stream_turn_surfaces_tool_results() -> None:
+    call = ToolCall(id="c1", name="echo", arguments={"x": 1})
+    provider = FakeStreamingProvider(
+        [
+            [StreamChunk(completion=Completion(tool_calls=(call,)))],
+            [StreamChunk(text="done"), StreamChunk(completion=Completion(text="done"))],
+        ]
+    )
+    tool = RecordingTool(name="echo", output="ran")
+    agent = Agent(provider, [tool], system_prompt="s")
+    results: list[tuple[str, str]] = []
+
+    turn = agent.stream_turn(
+        "go",
+        on_text=lambda _delta: None,
+        on_tool_result=lambda r: results.append((r.tool_call_id, r.content)),
+    )
+
+    assert results == [("c1", "ran")]
+    assert turn.final_text == "done"
+
+
+def test_stream_turn_reports_running_usage_after_each_model_call() -> None:
+    call = ToolCall(id="c1", name="echo")
+    provider = FakeStreamingProvider(
+        [
+            [StreamChunk(completion=Completion(tool_calls=(call,), usage=Usage(output_tokens=3)))],
+            [StreamChunk(completion=Completion(text="done", usage=Usage(output_tokens=4)))],
+        ]
+    )
+    agent = Agent(provider, [RecordingTool(name="echo")], system_prompt="s")
+    seen: list[Usage] = []
+
+    agent.stream_turn("go", on_text=lambda _delta: None, on_usage=seen.append)
+
+    # One report per model call, each carrying the cumulative total so far.
+    assert [u.output_tokens for u in seen] == [3, 7]
+
+
 def test_stream_turn_raises_if_stream_has_no_completion() -> None:
     provider = FakeStreamingProvider([[StreamChunk(text="partial")]])
     agent = Agent(provider, [], system_prompt="s")

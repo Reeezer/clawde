@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from clawde_core.config import GeminiSettings, ProvidersSettings, Settings
 from clawde_core.loop import AgentError, Turn
-from clawde_core.models import ImageContent, ToolCall, Usage
+from clawde_core.models import ImageContent, ToolCall, ToolResult, Usage
 from typer.testing import CliRunner
 
 from clawde_cli import __version__
@@ -46,6 +46,8 @@ def _fake_agent_class(
             user_input: str,
             on_text: Callable[[str], None],
             on_tool_call: Callable[[ToolCall], None] | None = None,
+            on_tool_result: Callable[[ToolResult], None] | None = None,
+            on_usage: Callable[[Usage], None] | None = None,
             *,
             images: tuple[ImageContent, ...] = (),
         ) -> Turn:
@@ -55,13 +57,33 @@ def _fake_agent_class(
                 raise error
             for delta in deltas:
                 on_text(delta)
-            if on_tool_call is not None:
-                for call in tool_calls:
+            for call in tool_calls:
+                if on_tool_call is not None:
                     on_tool_call(call)
+                if on_tool_result is not None:
+                    on_tool_result(ToolResult(tool_call_id=call.id, content="ran ok"))
+            if on_usage is not None:
+                on_usage(Usage(output_tokens=4))
             assert turn is not None
             return turn
 
     return _FakeAgent
+
+
+def test_force_utf8_reconfigures_supporting_streams() -> None:
+    seen: list[dict[str, str]] = []
+
+    class _Stream:
+        def reconfigure(self, *, encoding: str, errors: str) -> None:
+            seen.append({"encoding": encoding, "errors": errors})
+
+    app_module._force_utf8(_Stream())
+
+    assert seen == [{"encoding": "utf-8", "errors": "replace"}]
+
+
+def test_force_utf8_ignores_streams_without_reconfigure() -> None:
+    app_module._force_utf8(object())  # no reconfigure attr: a quiet no-op
 
 
 def test_version_flag_prints_the_version() -> None:
@@ -102,7 +124,7 @@ def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert "here are the files" in result.stdout  # streamed deltas
     assert "bash" in result.stdout  # tool-call trace
-    assert "7 tokens used" in result.stdout
+    assert "7 tokens" in result.stdout  # closing summary
 
 
 def test_agent_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
