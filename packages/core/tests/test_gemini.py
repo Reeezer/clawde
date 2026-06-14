@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import builtins
-from types import SimpleNamespace
+import logging
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -9,6 +11,9 @@ from clawde_core.models import Message, ToolCall, ToolSpec, Usage
 from clawde_core.providers import gemini as gemini_module
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
+
+if TYPE_CHECKING:
+    from google.genai import types
 
 
 class _FakeModels:
@@ -47,6 +52,34 @@ def _install_fake_client(
 
     monkeypatch.setattr(genai, "Client", factory)
     return client, created
+
+
+def _response(
+    *,
+    text: str | None = None,
+    function_calls: Sequence[types.FunctionCall] = (),
+    usage: types.GenerateContentResponseUsageMetadata | None = None,
+    thought: str | None = None,
+) -> types.GenerateContentResponse:
+    """Build a realistic Gemini response from text / thought / function-call parts.
+
+    Faithful to the SDK shape the provider reads: text and tool calls travel as
+    ``Part``s under ``candidates[0].content``, never as bare attributes — which
+    is what lets these tests exercise the real ``response.function_calls`` and
+    ``_text_of`` paths instead of a hand-faked ``.text``.
+    """
+    from google.genai import types
+
+    parts: list[types.Part] = []
+    if thought is not None:
+        parts.append(types.Part(text=thought, thought=True))
+    if text is not None:
+        parts.append(types.Part(text=text))
+    parts.extend(types.Part(function_call=call) for call in function_calls)
+    return types.GenerateContentResponse(
+        candidates=[types.Candidate(content=types.Content(role="model", parts=parts))],
+        usage_metadata=usage,
+    )
 
 
 # --- construction & SDK guard -------------------------------------------------
@@ -123,16 +156,46 @@ def test_to_gemini_tools_builds_declarations() -> None:
     assert declarations[0].name == "bash"
 
 
+# --- _text_of(): read text from parts, never the warning-prone .text accessor -
+
+
+def test_text_of_keeps_text_and_skips_thought_and_function_call() -> None:
+    from google.genai import types
+
+    response = _response(
+        text="the answer",
+        function_calls=[types.FunctionCall(name="bash", args={})],
+        thought="(internal reasoning)",
+    )
+
+    assert gemini_module._text_of(response) == "the answer"
+
+
+def test_text_of_returns_empty_when_no_text_parts() -> None:
+    from google.genai import types
+
+    textless = [
+        types.GenerateContentResponse(candidates=None),
+        types.GenerateContentResponse(candidates=[]),
+        types.GenerateContentResponse(candidates=[types.Candidate(content=None)]),
+        types.GenerateContentResponse(
+            candidates=[types.Candidate(content=types.Content(parts=None))]
+        ),
+        _response(function_calls=[types.FunctionCall(name="bash", args={})]),
+    ]
+
+    assert [gemini_module._text_of(response) for response in textless] == ["", "", "", "", ""]
+
+
 # --- complete(): the full call + normalisation --------------------------------
 
 
 def test_complete_normalises_text_and_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     from google.genai import types
 
-    response = SimpleNamespace(
+    response = _response(
         text="hi there",
-        function_calls=None,
-        usage_metadata=types.GenerateContentResponseUsageMetadata(
+        usage=types.GenerateContentResponseUsageMetadata(
             prompt_token_count=10, candidates_token_count=5, cached_content_token_count=2
         ),
     )
@@ -160,7 +223,7 @@ def test_complete_normalises_function_calls_and_request(
     from google.genai import types
 
     function_call = types.FunctionCall(name="bash", args={"command": "ls"})
-    response = SimpleNamespace(text=None, function_calls=[function_call], usage_metadata=None)
+    response = _response(function_calls=[function_call])
     client, _ = _install_fake_client(monkeypatch, response)
     provider = GeminiProvider(api_key="key", model="gemini-2.5-flash")
     spec = ToolSpec(
@@ -190,6 +253,27 @@ def test_complete_normalises_function_calls_and_request(
     assert len(contents) == 1  # only the user turn (system went to system_instruction)
 
 
+def test_complete_does_not_emit_the_non_text_parts_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from google.genai import types
+
+    # Re-arm the SDK's once-per-process guard so any stray `response.text` access
+    # in the provider would log *here* — making this a real regression test, not
+    # a no-op riding a flag some earlier test already tripped.
+    monkeypatch.setattr(types, "_response_text_non_text_warning_logged", False)
+    response = _response(function_calls=[types.FunctionCall(name="bash", args={"command": "ls"})])
+    _install_fake_client(monkeypatch, response)
+    provider = GeminiProvider(api_key="key", model=DEFAULT_MODEL)
+
+    with caplog.at_level(logging.WARNING, logger="google_genai.types"):
+        completion = provider.complete([Message.user("list files")], [])
+
+    assert [call.name for call in completion.tool_calls] == ["bash"]
+    assert completion.text == ""
+    assert "non-text parts" not in caplog.text
+
+
 # --- stream(): SSE deltas + final completion ----------------------------------
 
 
@@ -197,11 +281,10 @@ def test_stream_yields_deltas_then_final_completion(monkeypatch: pytest.MonkeyPa
     from google.genai import types
 
     chunks: list[object] = [
-        SimpleNamespace(text="Hello ", function_calls=None, usage_metadata=None),
-        SimpleNamespace(
+        _response(text="Hello "),
+        _response(
             text="world",
-            function_calls=None,
-            usage_metadata=types.GenerateContentResponseUsageMetadata(
+            usage=types.GenerateContentResponseUsageMetadata(
                 prompt_token_count=4, candidates_token_count=2, cached_content_token_count=0
             ),
         ),
@@ -224,9 +307,7 @@ def test_stream_collects_function_calls_without_text(monkeypatch: pytest.MonkeyP
     from google.genai import types
 
     function_call = types.FunctionCall(name="bash", args={"command": "ls"})
-    chunks: list[object] = [
-        SimpleNamespace(text=None, function_calls=[function_call], usage_metadata=None)
-    ]
+    chunks: list[object] = [_response(function_calls=[function_call])]
     _install_fake_client(monkeypatch, chunks=chunks)
     provider = GeminiProvider(api_key="key", model="gemini-2.5-flash")
     spec = ToolSpec(name="bash", description="run", parameters={"type": "object"})

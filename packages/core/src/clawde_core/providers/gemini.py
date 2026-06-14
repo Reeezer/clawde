@@ -55,7 +55,7 @@ class GeminiProvider(ModelProvider):
             config=_build_config(messages, tools),
         )
         for response in responses:
-            delta = response.text or ""
+            delta = _text_of(response)
             if delta:
                 text_parts.append(delta)
                 yield StreamChunk(text=delta)
@@ -158,9 +158,31 @@ def _to_gemini_tools(specs: Sequence[ToolSpec]) -> list[types.Tool] | None:
     return [types.Tool(function_declarations=declarations)]
 
 
+def _text_of(response: types.GenerateContentResponse) -> str:
+    """Concatenate the response's text parts, skipping any thought parts.
+
+    Reads ``candidates[0].content.parts`` directly rather than the SDK's
+    ``response.text`` accessor, which logs a warning whenever the response also
+    carries a non-text part — i.e. on every turn the model answers with a
+    ``function_call``. clawde gathers those calls separately via
+    ``response.function_calls``, so that warning is pure noise; we sidestep it by
+    reading the parts ourselves.
+    """
+    candidate = response.candidates[0] if response.candidates else None
+    if candidate is None or candidate.content is None or candidate.content.parts is None:
+        return ""
+    texts: list[str] = []
+    for part in candidate.content.parts:
+        if part.thought:
+            continue
+        if isinstance(part.text, str):
+            texts.append(part.text)
+    return "".join(texts)
+
+
 def _to_completion(response: types.GenerateContentResponse) -> Completion:
     return Completion(
-        text=response.text or "",
+        text=_text_of(response),
         tool_calls=_to_tool_calls(response.function_calls or []),
         usage=_to_usage(response.usage_metadata),
     )
