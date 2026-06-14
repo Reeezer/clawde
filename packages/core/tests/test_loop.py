@@ -7,6 +7,7 @@ import pytest
 from clawde_core.loop import Agent, AgentError
 from clawde_core.models import (
     Completion,
+    ImageContent,
     Message,
     Role,
     StreamChunk,
@@ -77,6 +78,17 @@ def test_answers_without_tools() -> None:
     assert turn.usage == Usage(input_tokens=5, output_tokens=2)
     assert provider.received[0][0] == Message.system("sys")
     assert provider.received[0][1] == Message.user("hi")
+
+
+def test_run_turn_attaches_images_to_the_user_message() -> None:
+    image = ImageContent(mime_type="image/png", data=b"png")
+    provider = FakeProvider([Completion(text="a diagram")])
+    agent = Agent(provider, [], system_prompt="s")
+
+    agent.run_turn("describe this", images=(image,))
+
+    user_message = provider.received[0][1]
+    assert user_message.images == (image,)
 
 
 def test_executes_tool_then_answers() -> None:

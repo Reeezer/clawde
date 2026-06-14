@@ -21,7 +21,14 @@ class ProviderError(RuntimeError):
 
 
 class ModelProvider(ABC):
-    """Adapts one model backend to clawde's typed message / tool / usage models."""
+    """Adapts one model backend to clawde's typed message / tool / usage models.
+
+    Image contract: clawde never drops input silently. A backend that accepts
+    images translates :class:`~clawde_core.models.ImageContent` to its wire
+    format; one that does not must call :meth:`_reject_image_input` before
+    translating a conversation, so an attached image raises a clear
+    :class:`ProviderError` instead of vanishing.
+    """
 
     @abstractmethod
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
@@ -42,3 +49,13 @@ class ModelProvider(ABC):
         Providers with a streaming API (e.g. Gemini) override this.
         """
         yield StreamChunk(completion=self.complete(messages, tools))
+
+    def _reject_image_input(self, messages: Sequence[Message]) -> None:
+        """Raise if any message carries images this backend can't send.
+
+        Text-only providers call this first thing in :meth:`complete` /
+        :meth:`stream`; image-capable providers (e.g. Gemini) handle the image
+        parts themselves and skip it.
+        """
+        if any(message.images for message in messages):
+            raise ProviderError(f"{type(self).__name__} does not support image input.")

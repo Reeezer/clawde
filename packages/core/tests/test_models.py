@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from clawde_core.models import (
     Completion,
+    ImageContent,
     Message,
     Role,
     StreamChunk,
@@ -51,6 +52,23 @@ def test_message_constructors() -> None:
     assert result.tool_call_id == "c1"
     assert result.name == "bash"
     assert result.content == "out"
+
+
+def test_image_content_is_frozen_value_object() -> None:
+    image = ImageContent(mime_type="image/png", data=b"\x89PNGdata")
+    assert image.mime_type == "image/png"
+    assert image.data == b"\x89PNGdata"
+    with pytest.raises(ValidationError):
+        image.data = b"changed"
+
+
+def test_message_carries_images_and_defaults_to_none() -> None:
+    assert Message.user("hi").images == ()  # additive: the str path is untouched
+
+    image = ImageContent(mime_type="image/jpeg", data=b"jpg")
+    msg = Message.user("what is this?", images=(image,))
+    assert msg.content == "what is this?"
+    assert msg.images == (image,)
 
 
 def test_tool_call_defaults_to_empty_arguments() -> None:

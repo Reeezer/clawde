@@ -11,6 +11,7 @@ from clawde_core.config import Settings, get_settings
 from clawde_core.loop import Agent, AgentError, Turn
 from clawde_core.models import (
     Completion,
+    ImageContent,
     Message,
     Role,
     StreamChunk,
@@ -29,6 +30,7 @@ __all__ = [
     "Agent",
     "AgentError",
     "Completion",
+    "ImageContent",
     "Message",
     "ModelProvider",
     "ProviderError",

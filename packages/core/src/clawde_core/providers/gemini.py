@@ -136,9 +136,10 @@ def _to_contents(messages: Sequence[Message]) -> list[types.Content]:
                 )
             contents.append(types.Content(role="model", parts=parts))
         else:
-            contents.append(
-                types.Content(role="user", parts=[types.Part.from_text(text=message.content)])
-            )
+            user_parts: list[types.Part] = [types.Part.from_text(text=message.content)]
+            for image in message.images:
+                user_parts.append(types.Part.from_bytes(data=image.data, mime_type=image.mime_type))
+            contents.append(types.Content(role="user", parts=user_parts))
     return contents
 
 

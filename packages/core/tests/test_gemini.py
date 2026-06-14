@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from clawde_core.models import Message, ToolCall, ToolSpec, Usage
+from clawde_core.models import ImageContent, Message, ToolCall, ToolSpec, Usage
 from clawde_core.providers import gemini as gemini_module
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
@@ -123,6 +123,22 @@ def test_to_contents_maps_every_role() -> None:
 
     # system is excluded (it travels as system_instruction, not as a turn)
     assert [content.role for content in contents] == ["user", "model", "tool"]
+
+
+def test_to_contents_appends_image_parts_to_a_user_message() -> None:
+    image = ImageContent(mime_type="image/png", data=b"\x89PNGdata")
+
+    contents = gemini_module._to_contents([Message.user("what is this?", images=(image,))])
+
+    assert len(contents) == 1
+    parts = contents[0].parts
+    assert parts is not None
+    # text part stays first, image parts follow
+    assert parts[0].text == "what is this?"
+    blob = parts[1].inline_data
+    assert blob is not None
+    assert blob.mime_type == "image/png"
+    assert blob.data == b"\x89PNGdata"
 
 
 def test_system_instruction_joins_system_messages() -> None:
@@ -334,4 +350,42 @@ def test_gemini_live_round_trip() -> None:
     completion = provider.complete([Message.user("Reply with exactly the word: pong")], [])
 
     assert "pong" in completion.text.lower()
+    assert completion.usage.total > 0
+
+
+def _solid_png(rgb: tuple[int, int, int], size: int = 8) -> bytes:
+    """Build a valid solid-colour truecolor PNG with the standard library only."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)  # 8-bit truecolor RGB
+    raw = (b"\x00" + bytes(rgb) * size) * size  # each row: filter byte + RGB pixels
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+@pytest.mark.integration
+def test_gemini_live_image_round_trip() -> None:
+    from clawde_core.config import get_settings
+
+    api_key = get_settings().providers.gemini.api_key
+    if not api_key:
+        pytest.skip("no Gemini API key configured")
+    provider = GeminiProvider(api_key=api_key, model=DEFAULT_MODEL)
+    image = ImageContent(mime_type="image/png", data=_solid_png((255, 0, 0)))
+
+    completion = provider.complete(
+        [Message.user("Reply with only the dominant colour word in this image.", images=(image,))],
+        [],
+    )
+
+    assert "red" in completion.text.lower()
     assert completion.usage.total > 0
