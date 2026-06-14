@@ -112,6 +112,19 @@ the right pattern over a fast, smelly patch — clean foundations are cheap to
 refactor, bad ones compound. Stay inside the task's boundary, but within it pick
 the design that won't need redoing.
 
+## Fact-forcing gate (GateGuard)
+
+A local hook — ECC **GateGuard** — makes you state intent before acting, so edits
+stay deliberate. The **first `Bash`** of a session, and the **first `Edit`/`Write`
+to each path** (it re-arms occasionally), are blocked once with a request for
+facts: who imports the file, the public API affected, any data-file shapes
+(synthetic values, never real secrets), and the verbatim user instruction.
+**Present the facts, then re-issue the same call** — the retry goes through.
+
+Don't evade it (e.g. writing files through `Bash`/heredoc) — it's a deliberate
+guardrail, not an obstacle. The documented escape hatch for bulk setup is
+`ECC_GATEGUARD=off` or adding the rule id to `ECC_DISABLED_HOOKS`; ask first.
+
 ## What NOT to do
 
 - Don't add an agent framework — the loop is hand-built on purpose.
@@ -120,3 +133,4 @@ the design that won't need redoing.
 - Don't pass ad-hoc dicts across stage boundaries — add a typed model.
 - Don't special-case one provider/tool in the loop — fix the abstraction.
 - Don't bypass the commit-msg / branch-name hooks with `--no-verify`.
+- Don't evade the fact-forcing gate (GateGuard) — state the facts and retry.

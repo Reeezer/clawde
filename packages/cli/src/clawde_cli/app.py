@@ -1,13 +1,23 @@
 """The ``clawde`` command-line entry point.
 
-Thin for now: a ``version`` command and a welcome callback. The interactive
-agent REPL arrives in a later roadmap phase (see ``docs/ROADMAP.md``); it will
-hang off this same Typer app.
+``clawde "<prompt>"`` runs a single agent turn against Gemini (Phase 1's only
+provider), streaming the reply as it arrives; ``--version`` prints the version.
+The interactive REPL and provider selection arrive in later roadmap phases and
+will hang off this same app.
 """
 
 from __future__ import annotations
 
+import platform
+from typing import Annotated
+
 import typer
+from clawde_core.config import get_settings
+from clawde_core.loop import Agent, AgentError
+from clawde_core.models import ToolCall
+from clawde_core.providers.base import ProviderError
+from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
+from clawde_core.tools.bash import BashTool
 from rich.console import Console
 
 from clawde_cli import __version__
@@ -20,17 +30,67 @@ app = typer.Typer(
 console = Console()
 
 
-@app.command()
-def version() -> None:
-    """Print the clawde version."""
-    console.print(f"clawde {__version__}")
-
-
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context) -> None:
+def main(
+    prompt: Annotated[
+        str | None, typer.Argument(help="A task for the agent to carry out in one turn.")
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option(help="Gemini model id (default: gemini-2.5-flash).")
+    ] = None,
+    show_version: Annotated[
+        bool, typer.Option("--version", help="Show the clawde version and exit.")
+    ] = False,
+) -> None:
     """clawde — a bring-your-own-model coding agent."""
-    if ctx.invoked_subcommand is None:
+    if show_version:
+        console.print(f"clawde {__version__}")
+        return
+    if prompt is None:
         console.print(
-            "[bold]clawde[/bold] — the interactive REPL is on the roadmap.\n"
-            "Run [cyan]clawde version[/cyan] or [cyan]clawde --help[/cyan]."
+            "[bold]clawde[/bold] — give me a task, e.g. "
+            '[cyan]clawde "list the python files"[/cyan].\n'
+            "The interactive REPL is on the roadmap."
         )
+        return
+    _run_turn(prompt, model)
+
+
+def _run_turn(prompt: str, model: str | None) -> None:
+    settings = get_settings()
+    api_key = settings.providers.gemini.api_key
+    if not api_key:
+        console.print(
+            "[red]No Gemini API key.[/red] Set CLAWDE_PROVIDERS__GEMINI__API_KEY in your .env."
+        )
+        raise typer.Exit(code=1)
+
+    provider = GeminiProvider(
+        api_key=api_key, model=model or settings.default_model or DEFAULT_MODEL
+    )
+    agent = Agent(provider, [BashTool()], system_prompt=_system_prompt())
+    try:
+        turn = agent.stream_turn(prompt, on_text=_emit_text, on_tool_call=_emit_tool_call)
+    except (ProviderError, AgentError) as exc:
+        console.print(f"\n[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print()  # end the streamed line
+    console.print(f"({turn.usage.total} tokens used)", style="dim", markup=False)
+
+
+def _emit_text(delta: str) -> None:
+    console.print(delta, end="", markup=False, highlight=False)
+
+
+def _emit_tool_call(call: ToolCall) -> None:
+    # Break the streamed line, then show the call as data (not rich markup).
+    console.print(f"\n-> {call.name}: {call.arguments}", style="dim", markup=False, highlight=False)
+
+
+def _system_prompt() -> str:
+    return (
+        "You are clawde, a coding agent working in a terminal on "
+        f"{platform.system()}. You have a `bash` tool that runs shell commands. "
+        "Use it to inspect the project and accomplish the user's request, then "
+        "reply with a concise final answer."
+    )
