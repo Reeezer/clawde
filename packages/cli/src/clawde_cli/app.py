@@ -1,9 +1,10 @@
 """The ``clawde`` command-line entry point.
 
-``clawde "<prompt>"`` runs a single agent turn against Gemini (Phase 1's only
-provider), streaming the reply as it arrives; ``--version`` prints the version.
-The interactive REPL and provider selection arrive in later roadmap phases and
-will hang off this same app.
+``clawde "<prompt>"`` runs a single agent turn against the configured provider,
+streaming the reply as it arrives. ``--provider`` / ``--model`` override the
+choice for one run and ``--version`` prints the version. The provider is built
+by the factory from settings (ADR-0003), so the CLI never names a concrete
+backend; the interactive REPL arrives in a later roadmap phase.
 """
 
 from __future__ import annotations
@@ -15,11 +16,11 @@ from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
-from clawde_core.config import get_settings
 from clawde_core.loop import Agent, AgentError
 from clawde_core.models import ImageContent, ToolCall
 from clawde_core.providers.base import ProviderError
-from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
+from clawde_core.providers.factory import build_provider
+from clawde_core.registry import RegistryError
 from clawde_core.tools.bash import BashTool
 from rich.console import Console
 
@@ -41,8 +42,12 @@ def main(
     prompt: Annotated[
         str | None, typer.Argument(help="A task for the agent to carry out in one turn.")
     ] = None,
+    provider: Annotated[
+        str | None,
+        typer.Option("--provider", help="Provider to use (e.g. anthropic, gemini, openai)."),
+    ] = None,
     model: Annotated[
-        str | None, typer.Option(help="Gemini model id (default: gemini-2.5-flash).")
+        str | None, typer.Option(help="Model id to use (default: the provider's own default).")
     ] = None,
     image: Annotated[
         list[Path] | None,
@@ -63,23 +68,18 @@ def main(
             "The interactive REPL is on the roadmap."
         )
         return
-    _run_turn(prompt, model, image or [])
+    _run_turn(prompt, provider, model, image or [])
 
 
-def _run_turn(prompt: str, model: str | None, image_paths: Sequence[Path]) -> None:
+def _run_turn(
+    prompt: str, provider: str | None, model: str | None, image_paths: Sequence[Path]
+) -> None:
     images = _load_images(image_paths)
-    settings = get_settings()
-    api_key = settings.providers.gemini.api_key
-    if not api_key:
-        console.print(
-            "[red]No Gemini API key.[/red] Set CLAWDE_PROVIDERS__GEMINI__API_KEY in your .env."
-        )
-        raise typer.Exit(code=1)
-
-    provider = GeminiProvider(
-        api_key=api_key, model=model or settings.default_model or DEFAULT_MODEL
-    )
-    agent = Agent(provider, [BashTool()], system_prompt=_system_prompt())
+    try:
+        model_provider = build_provider(provider, model)
+    except (ProviderError, RegistryError) as exc:
+        _fail(str(exc))
+    agent = Agent(model_provider, [BashTool()], system_prompt=_system_prompt())
     try:
         turn = agent.stream_turn(
             prompt, on_text=_emit_text, on_tool_call=_emit_tool_call, images=images
