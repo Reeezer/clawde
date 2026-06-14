@@ -27,7 +27,7 @@ loop, printing to stdout.
 - The loop: call → tool calls → execute → feed back → repeat → answer.
 - **Done when:** `clawde "list the python files"` completes a real tool-using turn.
 
-## Phase 2 — BYOM provider abstraction 🔜
+## Phase 2 — BYOM provider abstraction ✅
 
 Make the model swappable — the heart of BYOM. → ADR-0003.
 
@@ -49,7 +49,7 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
   deferred to a follow-up (it can silently corrupt files). → #4
 - **Done when:** the agent can read, search, and safely edit files end-to-end.
 
-## Phase 4 — Context management
+## Phase 4 — Context management 🔜
 
 - History store + per-provider token budgeting.
 - **Compaction** (summarise old turns; keep recent + pinned).
