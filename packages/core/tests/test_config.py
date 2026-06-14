@@ -26,3 +26,16 @@ def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_settings_is_cached() -> None:
     assert get_settings() is get_settings()
+
+
+def test_provider_api_key_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Isolate from the developer's real .env so the test is deterministic.
+    monkeypatch.delenv("CLAWDE_PROVIDERS__GEMINI__API_KEY", raising=False)
+    settings = Settings()
+    assert settings.providers.gemini.api_key is None
+
+
+def test_provider_api_key_from_nested_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAWDE_PROVIDERS__GEMINI__API_KEY", "secret-123")
+    settings = Settings()
+    assert settings.providers.gemini.api_key == "secret-123"

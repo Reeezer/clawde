@@ -308,6 +308,7 @@ openai = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "google-genai" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -326,6 +327,7 @@ provides-extras = ["anthropic", "openai", "gemini"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "google-genai", specifier = ">=2.0" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
