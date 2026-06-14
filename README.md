@@ -54,6 +54,40 @@ Gitflow: branch from `develop` as `feature/<name>`; CI and `gitflow-guard` enfor
 branch names and PR targets (see
 [docs/adr/0002](docs/adr/0002-gitflow-branching-strategy.md)).
 
+### Parallel sessions (git worktrees)
+
+To run several sessions at once — e.g. one Claude Code CLI session per task —
+without them trampling each other's files and git state, give each task its own
+**git worktree**: a separate working directory backed by the same repo, checked out
+to its own branch. Worktrees share one object store, so commits are visible across
+them without fetching; integrate as usual by PRing each `feature/*` into `develop`.
+
+```bash
+# from the main clone — one worktree per feature/* branch
+git worktree add ../clawde-providers feature/providers
+git worktree add ../clawde-repl      feature/repl
+```
+
+Each worktree needs its own per-directory setup — `.venv` and `.env` are **not**
+shared (both are gitignored):
+
+```bash
+cd ../clawde-providers
+uv sync --all-packages          # .venv is per-worktree
+uv run pre-commit install       # hooks are per-worktree
+cp ../clawde/.env .env          # BYOM key isn't committed — copy it in
+```
+
+On Windows, `.\setup.ps1` from inside the worktree does the first two steps and
+seeds an empty `.env`; you still copy your keyed `.env` in.
+
+- Two worktrees can't check out the **same** branch — give each its own `feature/*`.
+- Keep parallel tasks non-overlapping (e.g. `providers/` vs the CLI) so merges into
+  `develop` stay conflict-free.
+- Open one terminal + `claude` session per directory; the sessions don't share
+  state — only the filesystem and git, which the worktrees keep isolated.
+- Done with one? `git worktree remove ../clawde-providers`.
+
 ## License
 
 TBD.
