@@ -62,16 +62,31 @@ class Usage(_Frozen):
         )
 
 
+class ImageContent(_Frozen):
+    """An image attached to a user message: raw bytes plus their media type.
+
+    The typed alternative to smuggling base64 blobs through ``content``: a
+    provider that accepts images translates these to its wire format, and one
+    that doesn't rejects them rather than dropping them silently (see
+    :class:`~clawde_core.providers.base.ModelProvider`).
+    """
+
+    mime_type: str
+    data: bytes
+
+
 class Message(_Frozen):
     """One entry in the conversation.
 
     A single shape covers every role; which fields are populated depends on
-    ``role`` (assistant turns carry ``tool_calls``; tool results carry
-    ``tool_call_id`` and ``name``). The constructors below make intent explicit.
+    ``role`` (user turns may carry ``images``; assistant turns carry
+    ``tool_calls``; tool results carry ``tool_call_id`` and ``name``). The
+    constructors below make intent explicit.
     """
 
     role: Role
     content: str = ""
+    images: tuple[ImageContent, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
     name: str | None = None
@@ -81,8 +96,8 @@ class Message(_Frozen):
         return cls(role=Role.SYSTEM, content=content)
 
     @classmethod
-    def user(cls, content: str) -> Message:
-        return cls(role=Role.USER, content=content)
+    def user(cls, content: str, images: tuple[ImageContent, ...] = ()) -> Message:
+        return cls(role=Role.USER, content=content, images=images)
 
     @classmethod
     def assistant(cls, content: str = "", tool_calls: tuple[ToolCall, ...] = ()) -> Message:

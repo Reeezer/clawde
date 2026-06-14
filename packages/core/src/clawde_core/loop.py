@@ -15,7 +15,15 @@ from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from clawde_core.models import Completion, Message, ToolCall, ToolResult, ToolSpec, Usage
+from clawde_core.models import (
+    Completion,
+    ImageContent,
+    Message,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+    Usage,
+)
 from clawde_core.providers.base import ModelProvider
 from clawde_core.tools.base import Tool
 
@@ -53,11 +61,12 @@ class Agent:
         self._max_iterations = max_iterations
         self._history: list[Message] = []
 
-    def run_turn(self, user_input: str) -> Turn:
+    def run_turn(self, user_input: str, *, images: tuple[ImageContent, ...] = ()) -> Turn:
         """Drive one turn to completion, collecting the whole reply."""
         return self._drive(
             user_input,
             lambda: self._provider.complete(self._conversation(), self._specs()),
+            images=images,
         )
 
     def stream_turn(
@@ -65,6 +74,8 @@ class Agent:
         user_input: str,
         on_text: Callable[[str], None],
         on_tool_call: Callable[[ToolCall], None] | None = None,
+        *,
+        images: tuple[ImageContent, ...] = (),
     ) -> Turn:
         """Drive one turn, streaming text deltas to ``on_text`` as they arrive and
         announcing each tool call to ``on_tool_call`` before it runs."""
@@ -72,6 +83,7 @@ class Agent:
             user_input,
             lambda: self._stream_completion(on_text),
             on_tool_call=on_tool_call,
+            images=images,
         )
 
     def _drive(
@@ -79,9 +91,11 @@ class Agent:
         user_input: str,
         next_completion: Callable[[], Completion],
         on_tool_call: Callable[[ToolCall], None] | None = None,
+        *,
+        images: tuple[ImageContent, ...] = (),
     ) -> Turn:
         turn_start = len(self._history)
-        self._history.append(Message.user(user_input))
+        self._history.append(Message.user(user_input, images=images))
         usage = Usage()
         for _ in range(self._max_iterations):
             completion = next_completion()

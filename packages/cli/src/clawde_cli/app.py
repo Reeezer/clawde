@@ -8,13 +8,16 @@ will hang off this same app.
 
 from __future__ import annotations
 
+import mimetypes
 import platform
-from typing import Annotated
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Annotated, NoReturn
 
 import typer
 from clawde_core.config import get_settings
 from clawde_core.loop import Agent, AgentError
-from clawde_core.models import ToolCall
+from clawde_core.models import ImageContent, ToolCall
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
 from clawde_core.tools.bash import BashTool
@@ -29,6 +32,9 @@ app = typer.Typer(
 )
 console = Console()
 
+_MAX_IMAGE_MB = 20
+_MAX_IMAGE_BYTES = _MAX_IMAGE_MB * 1024 * 1024
+
 
 @app.callback(invoke_without_command=True)
 def main(
@@ -37,6 +43,10 @@ def main(
     ] = None,
     model: Annotated[
         str | None, typer.Option(help="Gemini model id (default: gemini-2.5-flash).")
+    ] = None,
+    image: Annotated[
+        list[Path] | None,
+        typer.Option("--image", help="Attach an image file to the prompt (repeatable)."),
     ] = None,
     show_version: Annotated[
         bool, typer.Option("--version", help="Show the clawde version and exit.")
@@ -53,10 +63,11 @@ def main(
             "The interactive REPL is on the roadmap."
         )
         return
-    _run_turn(prompt, model)
+    _run_turn(prompt, model, image or [])
 
 
-def _run_turn(prompt: str, model: str | None) -> None:
+def _run_turn(prompt: str, model: str | None, image_paths: Sequence[Path]) -> None:
+    images = _load_images(image_paths)
     settings = get_settings()
     api_key = settings.providers.gemini.api_key
     if not api_key:
@@ -70,12 +81,43 @@ def _run_turn(prompt: str, model: str | None) -> None:
     )
     agent = Agent(provider, [BashTool()], system_prompt=_system_prompt())
     try:
-        turn = agent.stream_turn(prompt, on_text=_emit_text, on_tool_call=_emit_tool_call)
+        turn = agent.stream_turn(
+            prompt, on_text=_emit_text, on_tool_call=_emit_tool_call, images=images
+        )
     except (ProviderError, AgentError) as exc:
         console.print(f"\n[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     console.print()  # end the streamed line
     console.print(f"({turn.usage.total} tokens used)", style="dim", markup=False)
+
+
+def _load_images(paths: Sequence[Path]) -> tuple[ImageContent, ...]:
+    """Read and validate ``--image`` paths into typed :class:`ImageContent`.
+
+    Fails fast with a friendly message on a missing path, a non-image (or
+    unrecognised) file, an unreadable file, or one above the size cap — so bad
+    input never reaches the provider. Image bytes never touch the logs.
+    """
+    images: list[ImageContent] = []
+    for path in paths:
+        if not path.is_file():
+            _fail(f"Image not found: {path}")
+        mime, _ = mimetypes.guess_type(path.name)
+        if mime is None or not mime.startswith("image/"):
+            _fail(f"Not a recognised image file: {path}")
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            _fail(f"Could not read image {path}: {exc}")
+        if len(data) > _MAX_IMAGE_BYTES:
+            _fail(f"Image is too large (max {_MAX_IMAGE_MB} MB): {path}")
+        images.append(ImageContent(mime_type=mime, data=data))
+    return tuple(images)
+
+
+def _fail(message: str) -> NoReturn:
+    console.print(f"[red]Error:[/red] {message}")
+    raise typer.Exit(code=1)
 
 
 def _emit_text(delta: str) -> None:

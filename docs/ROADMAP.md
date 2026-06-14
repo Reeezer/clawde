@@ -36,14 +36,15 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
   OpenAI-compatible (plain HTTP).
 - Normalise messages, **tool-calling (native *and* a JSON-in-text fallback for
   weak/local models)**, streaming, and token usage.
+- Multimodal input — images attached to a prompt, normalised per provider. → #6
 - **Done when:** the same task runs against ≥2 providers via `--provider`.
 
 ## Phase 3 — Tool system
 
-- `Tool` ABC + `TOOLS` registry + JSON-Schema params + dispatch / validation.
-- Core tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`.
+- `Tool` ABC + `TOOLS` registry + JSON-Schema params + dispatch / validation. → #2
+- Core tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`. → #3 (read/write/glob/grep)
 - The `edit` apply logic (exact match → unique-match guard → fuzzy) — the
-  deceptively hard one; budget for it.
+  deceptively hard one; budget for it. → #4
 - **Done when:** the agent can read, search, and safely edit files end-to-end.
 
 ## Phase 4 — Context management
@@ -57,12 +58,16 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
 
 - Permission modes (`ask` / `auto` / `plan`), approval prompts.
 - Bash sandboxing + allow/deny lists; secret-safe logging.
+- Secret-file read protection — tools refuse to read `.env` & configured secrets. → #5
 - **Done when:** mutating tools require approval unless explicitly trusted.
 
 ## Phase 6 — Interactive REPL / TUI
 
 - A real REPL (prompt_toolkit) with streaming render (rich), markdown, tool-call
   display, slash commands, and clean Ctrl-C interrupts.
+- Output presentation, landable ahead of the full REPL: markdown/colour rendering
+  (→ #7), tool-call formatting (→ #8), a live status spinner with elapsed time &
+  token count (→ #9).
 - **Done when:** `clawde` is a pleasant multi-turn interactive session.
 
 ## Phase 7 — Persistence, sessions & project memory
