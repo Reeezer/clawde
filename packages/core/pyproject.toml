@@ -63,9 +63,11 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.6",
     "mypy>=1.11",
-    # Installed for tests only: the Gemini provider lazy-imports this at runtime
-    # (optional `gemini` extra), but the offline test suite needs the real
-    # `google.genai.types` to exercise message/tool conversion without a network
-    # call. Not a runtime dependency — the base wheel stays SDK-free (ADR-0003).
+    # Installed for tests only: each provider lazy-imports its SDK at runtime
+    # (optional extras), but the offline test suite imports them to fake the
+    # client and exercise message/tool conversion without a network call. Not
+    # runtime dependencies — the base wheel stays SDK-free (ADR-0003).
     "google-genai>=2.0",
+    "anthropic>=0.40",
+    "openai>=1.50",
 ]

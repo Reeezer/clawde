@@ -13,7 +13,9 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING
 
+from clawde_core.config import get_settings
 from clawde_core.models import Completion, Message, Role, StreamChunk, ToolCall, ToolSpec, Usage
+from clawde_core.providers import PROVIDERS
 from clawde_core.providers.base import ModelProvider, ProviderError
 
 if TYPE_CHECKING:
@@ -203,4 +205,19 @@ def _to_usage(metadata: types.GenerateContentResponseUsageMetadata | None) -> Us
         input_tokens=metadata.prompt_token_count or 0,
         output_tokens=metadata.candidates_token_count or 0,
         cached_tokens=metadata.cached_content_token_count or 0,
+    )
+
+
+@PROVIDERS.register("gemini")
+def _build_gemini() -> ModelProvider:
+    """Build the Gemini provider from settings — the ``PROVIDERS`` builder (ADR-0003).
+
+    Zero-arg so the generic ``Registry`` can drive it; reads the cached
+    ``get_settings()`` for the key and model. A missing key surfaces as a
+    :class:`ProviderError` from :class:`GeminiProvider` at build time.
+    """
+    settings = get_settings()
+    return GeminiProvider(
+        api_key=settings.providers.gemini.api_key or "",
+        model=settings.default_model or DEFAULT_MODEL,
     )
