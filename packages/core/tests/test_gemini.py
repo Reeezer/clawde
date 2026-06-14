@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from clawde_core.config import GeminiSettings, ProvidersSettings, Settings
 from clawde_core.models import ImageContent, Message, ToolCall, ToolSpec, Usage
+from clawde_core.providers import PROVIDERS
 from clawde_core.providers import gemini as gemini_module
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
@@ -88,6 +90,33 @@ def _response(
 def test_missing_api_key_raises() -> None:
     with pytest.raises(ProviderError, match="API key"):
         GeminiProvider(api_key="", model=DEFAULT_MODEL)
+
+
+def test_gemini_is_registered_in_providers() -> None:
+    assert "gemini" in PROVIDERS
+
+
+def test_registered_builder_builds_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        default_model="gemini-custom",
+        providers=ProvidersSettings(gemini=GeminiSettings(api_key="secret-key")),
+    )
+    monkeypatch.setattr(gemini_module, "get_settings", lambda: settings)
+
+    provider = gemini_module._build_gemini()
+
+    assert isinstance(provider, GeminiProvider)
+    assert provider._model == "gemini-custom"
+
+
+def test_registered_builder_falls_back_to_default_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(providers=ProvidersSettings(gemini=GeminiSettings(api_key="secret-key")))
+    monkeypatch.setattr(gemini_module, "get_settings", lambda: settings)
+
+    provider = gemini_module._build_gemini()
+
+    assert isinstance(provider, GeminiProvider)
+    assert provider._model == DEFAULT_MODEL
 
 
 def test_ensure_sdk_passes_when_installed() -> None:
