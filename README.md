@@ -62,20 +62,25 @@ without them trampling each other's files and git state, give each task its own
 to its own branch. Worktrees share one object store, so commits are visible across
 them without fetching; integrate as usual by PRing each `feature/*` into `develop`.
 
+Keep every worktree under a single `.worktrees/` directory in the repo root, one
+subfolder per branch named after the branch itself (`.worktrees/<branch>`), so
+they all live in the same place. `.worktrees/` is gitignored, so these nested
+checkouts never show up as untracked in the main clone.
+
 ```bash
-# from the main clone — one worktree per feature/* branch
-git worktree add ../clawde-providers feature/providers
-git worktree add ../clawde-repl      feature/repl
+# from the repo root — one worktree per feature/* branch, all under .worktrees/
+git worktree add .worktrees/feature/providers feature/providers
+git worktree add .worktrees/feature/repl      feature/repl
 ```
 
 Each worktree needs its own per-directory setup — `.venv` and `.env` are **not**
 shared (both are gitignored):
 
 ```bash
-cd ../clawde-providers
+cd .worktrees/feature/providers
 uv sync --all-packages          # .venv is per-worktree
 uv run pre-commit install       # hooks are per-worktree
-cp ../clawde/.env .env          # BYOM key isn't committed — copy it in
+cp ../../../.env .env           # BYOM key isn't committed — copy it in
 ```
 
 On Windows, `.\setup.ps1` from inside the worktree does the first two steps and
@@ -86,7 +91,7 @@ seeds an empty `.env`; you still copy your keyed `.env` in.
   `develop` stay conflict-free.
 - Open one terminal + `claude` session per directory; the sessions don't share
   state — only the filesystem and git, which the worktrees keep isolated.
-- Done with one? `git worktree remove ../clawde-providers`.
+- Done with one? `git worktree remove .worktrees/feature/providers`.
 
 ## License
 
