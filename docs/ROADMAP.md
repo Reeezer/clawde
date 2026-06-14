@@ -27,13 +27,14 @@ loop, printing to stdout.
 - The loop: call → tool calls → execute → feed back → repeat → answer.
 - **Done when:** `clawde "list the python files"` completes a real tool-using turn.
 
-## Phase 2 — BYOM provider abstraction 🔜
+## Phase 2 — BYOM provider abstraction ✅
 
 Make the model swappable — the heart of BYOM. → ADR-0003.
 
 - `ModelProvider` ABC + `PROVIDERS` registry + factory from `Settings`.
-- Impls (lazy SDK imports, optional extras): Anthropic, OpenAI, Gemini, Ollama /
-  OpenAI-compatible (plain HTTP).
+- Impls (lazy SDK imports, optional extras): Anthropic, Gemini, and one
+  OpenAI-compatible provider covering OpenAI + Ollama / local endpoints via a
+  configurable `base_url`.
 - Normalise messages, **tool-calling (native *and* a JSON-in-text fallback for
   weak/local models)**, streaming, and token usage.
 - Multimodal input — images attached to a prompt, normalised per provider. → #6
@@ -48,7 +49,7 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
   deferred to a follow-up (it can silently corrupt files). → #4
 - **Done when:** the agent can read, search, and safely edit files end-to-end.
 
-## Phase 4 — Context management
+## Phase 4 — Context management 🔜
 
 - History store + per-provider token budgeting.
 - **Compaction** (summarise old turns; keep recent + pinned).

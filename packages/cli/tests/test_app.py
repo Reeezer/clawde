@@ -4,9 +4,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from clawde_core.config import GeminiSettings, ProvidersSettings, Settings
 from clawde_core.loop import AgentError, Turn
 from clawde_core.models import ImageContent, ToolCall, ToolResult, Usage
+from clawde_core.providers.base import ProviderError
+from clawde_core.registry import RegistryError
 from typer.testing import CliRunner
 
 from clawde_cli import __version__
@@ -16,11 +17,20 @@ from clawde_cli.app import app
 runner = CliRunner()
 
 
-def _settings(api_key: str | None, default_model: str | None = None) -> Settings:
-    return Settings(
-        default_model=default_model,
-        providers=ProvidersSettings(gemini=GeminiSettings(api_key=api_key)),
-    )
+def _install_provider(
+    monkeypatch: pytest.MonkeyPatch, error: Exception | None = None
+) -> list[dict[str, str | None]]:
+    """Replace the factory with a stub; return a list recording how it was called."""
+    seen: list[dict[str, str | None]] = []
+
+    def fake_build_provider(provider: str | None = None, model: str | None = None) -> object:
+        seen.append({"provider": provider, "model": model})
+        if error is not None:
+            raise error
+        return object()  # the faked Agent ignores the provider object
+
+    monkeypatch.setattr(app_module, "build_provider", fake_build_provider)
+    return seen
 
 
 def _fake_agent_class(
@@ -98,15 +108,30 @@ def test_no_prompt_shows_a_hint() -> None:
     assert "clawde" in result.stdout.lower()
 
 
-def test_missing_api_key_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app_module, "get_settings", lambda: _settings(api_key=None))
+def test_provider_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(
+        monkeypatch,
+        error=ProviderError(
+            "Anthropic API key is missing. Set CLAWDE_PROVIDERS__ANTHROPIC__API_KEY in your .env."
+        ),
+    )
     result = runner.invoke(app, ["do something"])
     assert result.exit_code == 1
     assert "api key" in result.stdout.lower()
 
 
+def test_unknown_provider_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(
+        monkeypatch,
+        error=RegistryError("providers: unknown key 'nope'; known: anthropic, gemini, openai"),
+    )
+    result = runner.invoke(app, ["--provider", "nope", "hi"])
+    assert result.exit_code == 1
+    assert "unknown key" in result.stdout.lower()
+
+
 def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app_module, "get_settings", lambda: _settings(api_key="key123"))
+    _install_provider(monkeypatch)
     turn = Turn(
         final_text="here are the files",
         messages=(),
@@ -127,8 +152,19 @@ def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "7 tokens" in result.stdout  # closing summary
 
 
+def test_provider_and_model_flags_reach_the_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _install_provider(monkeypatch)
+    turn = Turn(final_text="ok", messages=(), usage=Usage(output_tokens=1))
+    monkeypatch.setattr(app_module, "Agent", _fake_agent_class(turn=turn, deltas=("ok",)))
+
+    result = runner.invoke(app, ["--provider", "anthropic", "--model", "claude-x", "hi"])
+
+    assert result.exit_code == 0
+    assert seen == [{"provider": "anthropic", "model": "claude-x"}]
+
+
 def test_agent_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app_module, "get_settings", lambda: _settings(api_key="key123"))
+    _install_provider(monkeypatch)
     monkeypatch.setattr(app_module, "Agent", _fake_agent_class(error=AgentError("boom")))
 
     result = runner.invoke(app, ["loop forever"])
@@ -140,7 +176,7 @@ def test_agent_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_image_option_attaches_image_to_the_turn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(app_module, "get_settings", lambda: _settings(api_key="key123"))
+    _install_provider(monkeypatch)
     image_path = tmp_path / "diagram.png"
     image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
     seen: list[ImageContent] = []
