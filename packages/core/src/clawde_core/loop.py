@@ -145,4 +145,4 @@ class Agent:
                 tool_call_id=call.id,
                 content=f"Error: unknown tool '{call.name}'. Available tools: {available}.",
             )
-        return ToolResult(tool_call_id=call.id, content=tool.run(call.arguments))
+        return ToolResult(tool_call_id=call.id, content=tool.invoke(call.arguments))

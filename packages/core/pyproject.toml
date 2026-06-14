@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    # Pure-Python JSON-Schema validator used to check tool-call arguments before
+    # dispatch (tools/base.py). Not a model SDK — it is import-clean and offline,
+    # so it lives in the base deps and is imported at module top (see ADR-0003).
+    "jsonschema>=4.20",
 ]
 
 [project.optional-dependencies]
@@ -63,6 +67,9 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.6",
     "mypy>=1.11",
+    # Type stubs for the (otherwise untyped) jsonschema runtime dep, for mypy
+    # --strict. Dev-only: the base wheel needs only jsonschema itself.
+    "types-jsonschema>=4.20",
     # Installed for tests only: the Gemini provider lazy-imports this at runtime
     # (optional `gemini` extra), but the offline test suite needs the real
     # `google.genai.types` to exercise message/tool conversion without a network
