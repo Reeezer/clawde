@@ -1,8 +1,9 @@
 """The ``clawde`` command-line entry point.
 
 ``clawde "<prompt>"`` runs a single agent turn against Gemini (Phase 1's only
-provider); ``--version`` prints the version. The interactive REPL and provider
-selection arrive in later roadmap phases and will hang off this same app.
+provider), streaming the reply as it arrives; ``--version`` prints the version.
+The interactive REPL and provider selection arrive in later roadmap phases and
+will hang off this same app.
 """
 
 from __future__ import annotations
@@ -12,7 +13,8 @@ from typing import Annotated
 
 import typer
 from clawde_core.config import get_settings
-from clawde_core.loop import Agent, AgentError, Turn
+from clawde_core.loop import Agent, AgentError
+from clawde_core.models import ToolCall
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
 from clawde_core.tools.bash import BashTool
@@ -68,11 +70,21 @@ def _run_turn(prompt: str, model: str | None) -> None:
     )
     agent = Agent(provider, [BashTool()], system_prompt=_system_prompt())
     try:
-        turn = agent.run_turn(prompt)
+        turn = agent.stream_turn(prompt, on_text=_emit_text, on_tool_call=_emit_tool_call)
     except (ProviderError, AgentError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        console.print(f"\n[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
-    _render(turn)
+    console.print()  # end the streamed line
+    console.print(f"({turn.usage.total} tokens used)", style="dim", markup=False)
+
+
+def _emit_text(delta: str) -> None:
+    console.print(delta, end="", markup=False, highlight=False)
+
+
+def _emit_tool_call(call: ToolCall) -> None:
+    # Break the streamed line, then show the call as data (not rich markup).
+    console.print(f"\n-> {call.name}: {call.arguments}", style="dim", markup=False, highlight=False)
 
 
 def _system_prompt() -> str:
@@ -82,13 +94,3 @@ def _system_prompt() -> str:
         "Use it to inspect the project and accomplish the user's request, then "
         "reply with a concise final answer."
     )
-
-
-def _render(turn: Turn) -> None:
-    # markup=False: tool args and model text are data, not rich markup (they may
-    # contain "[..]"). ASCII marker keeps output safe on cp1252 Windows consoles.
-    for message in turn.messages:
-        for call in message.tool_calls:
-            console.print(f"-> {call.name}: {call.arguments}", style="dim", markup=False)
-    console.print(turn.final_text, markup=False)
-    console.print(f"({turn.usage.total} tokens used)", style="dim", markup=False)

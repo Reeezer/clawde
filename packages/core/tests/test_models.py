@@ -7,6 +7,7 @@ from clawde_core.models import (
     Completion,
     Message,
     Role,
+    StreamChunk,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -87,6 +88,17 @@ def test_completion_defaults() -> None:
     assert completion.text == ""
     assert completion.tool_calls == ()
     assert completion.usage == Usage()
+
+
+def test_stream_chunk() -> None:
+    delta = StreamChunk(text="hi")
+    assert delta.text == "hi"
+    assert delta.completion is None
+
+    terminal = StreamChunk(completion=Completion(text="done"))
+    assert terminal.text == ""
+    assert terminal.completion is not None
+    assert terminal.completion.text == "done"
 
 
 def test_tool_spec() -> None:

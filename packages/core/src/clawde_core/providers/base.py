@@ -4,16 +4,16 @@ Concrete providers (Anthropic, OpenAI, Gemini, Ollama, …) live one per file an
 normalise their wire format to and from clawde's typed
 :mod:`~clawde_core.models`. The loop depends only on this ABC and never sees a
 vendor type (ADR-0003). The ``PROVIDERS`` registry, the ``Settings`` factory,
-streaming, and the JSON-in-text tool-calling fallback arrive in Phase 2; the
-contract below is what the loop is written against and will not change.
+and the JSON-in-text tool-calling fallback arrive in Phase 2; the contract below
+is what the loop is written against and will not change.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
-from clawde_core.models import Completion, Message, ToolSpec
+from clawde_core.models import Completion, Message, StreamChunk, ToolSpec
 
 
 class ProviderError(RuntimeError):
@@ -31,3 +31,14 @@ class ModelProvider(ABC):
         format, call the backend, and normalise the result back into a
         :class:`~clawde_core.models.Completion`.
         """
+
+    def stream(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec]
+    ) -> Iterator[StreamChunk]:
+        """Stream the reply as text deltas, ending with a chunk that carries the
+        full :class:`~clawde_core.models.Completion`.
+
+        Default: no real streaming — emit the whole reply as one terminal chunk.
+        Providers with a streaming API (e.g. Gemini) override this.
+        """
+        yield StreamChunk(completion=self.complete(messages, tools))

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
 
@@ -9,6 +9,7 @@ from clawde_core.models import (
     Completion,
     Message,
     Role,
+    StreamChunk,
     ToolCall,
     ToolSpec,
     Usage,
@@ -18,7 +19,10 @@ from clawde_core.tools.base import Tool
 
 
 class FakeProvider(ModelProvider):
-    """Returns queued completions in order; records the messages it was sent."""
+    """Returns queued completions in order; records the messages it was sent.
+
+    Has no ``stream()`` override, so streaming tests exercise the base default.
+    """
 
     def __init__(self, completions: Sequence[Completion]) -> None:
         self._queue = list(completions)
@@ -27,6 +31,21 @@ class FakeProvider(ModelProvider):
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self.received.append(tuple(messages))
         return self._queue.pop(0)
+
+
+class FakeStreamingProvider(ModelProvider):
+    """Yields scripted stream chunks, one script per model call."""
+
+    def __init__(self, scripts: Sequence[Sequence[StreamChunk]]) -> None:
+        self._scripts = [list(script) for script in scripts]
+
+    def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
+        raise NotImplementedError  # streaming tests exercise stream() only
+
+    def stream(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec]
+    ) -> Iterator[StreamChunk]:
+        yield from self._scripts.pop(0)
 
 
 class RecordingTool(Tool):
@@ -128,3 +147,65 @@ def test_history_persists_but_turn_carries_only_its_messages() -> None:
     assert [m.content for m in second.messages] == ["b", "two"]
     # the second call saw the full prior history (system + 2 turns of context)
     assert len(provider.received[1]) == 1 + 3  # system + (user a, asst one, user b)
+
+
+def test_stream_turn_falls_back_to_default_stream() -> None:
+    # FakeProvider has no stream() override, so the ABC default (one terminal
+    # chunk wrapping complete()) is used: no incremental text, same final answer.
+    provider = FakeProvider([Completion(text="hello", usage=Usage(output_tokens=2))])
+    agent = Agent(provider, [], system_prompt="s")
+    seen: list[str] = []
+
+    turn = agent.stream_turn("hi", on_text=seen.append)
+
+    assert seen == []
+    assert turn.final_text == "hello"
+    assert turn.usage == Usage(output_tokens=2)
+
+
+def test_stream_turn_streams_text_deltas() -> None:
+    provider = FakeStreamingProvider(
+        [
+            [
+                StreamChunk(text="Hel"),
+                StreamChunk(text="lo"),
+                StreamChunk(completion=Completion(text="Hello", usage=Usage(output_tokens=1))),
+            ]
+        ]
+    )
+    agent = Agent(provider, [], system_prompt="s")
+    seen: list[str] = []
+
+    turn = agent.stream_turn("hi", on_text=seen.append)
+
+    assert seen == ["Hel", "lo"]
+    assert turn.final_text == "Hello"
+
+
+def test_stream_turn_announces_tool_calls() -> None:
+    call = ToolCall(id="c1", name="echo", arguments={"x": 1})
+    provider = FakeStreamingProvider(
+        [
+            [StreamChunk(completion=Completion(tool_calls=(call,)))],
+            [StreamChunk(text="done"), StreamChunk(completion=Completion(text="done"))],
+        ]
+    )
+    tool = RecordingTool(name="echo", output="ran")
+    agent = Agent(provider, [tool], system_prompt="s")
+    announced: list[str] = []
+
+    turn = agent.stream_turn(
+        "go", on_text=lambda _delta: None, on_tool_call=lambda c: announced.append(c.name)
+    )
+
+    assert announced == ["echo"]
+    assert tool.calls == [{"x": 1}]
+    assert turn.final_text == "done"
+
+
+def test_stream_turn_raises_if_stream_has_no_completion() -> None:
+    provider = FakeStreamingProvider([[StreamChunk(text="partial")]])
+    agent = Agent(provider, [], system_prompt="s")
+
+    with pytest.raises(AgentError, match="without a completion"):
+        agent.stream_turn("hi", on_text=lambda _delta: None)

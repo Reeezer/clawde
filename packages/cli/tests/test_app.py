@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from clawde_core.config import GeminiSettings, ProvidersSettings, Settings
 from clawde_core.loop import AgentError, Turn
-from clawde_core.models import Message, ToolCall, Usage
+from clawde_core.models import ToolCall, Usage
 from typer.testing import CliRunner
 
 from clawde_cli import __version__
@@ -20,7 +22,12 @@ def _settings(api_key: str | None, default_model: str | None = None) -> Settings
     )
 
 
-def _fake_agent_class(turn: Turn | None = None, error: Exception | None = None) -> type:
+def _fake_agent_class(
+    turn: Turn | None = None,
+    error: Exception | None = None,
+    deltas: tuple[str, ...] = (),
+    tool_calls: tuple[ToolCall, ...] = (),
+) -> type:
     class _FakeAgent:
         def __init__(
             self,
@@ -32,9 +39,19 @@ def _fake_agent_class(turn: Turn | None = None, error: Exception | None = None) 
         ) -> None:
             self.system_prompt = system_prompt
 
-        def run_turn(self, user_input: str) -> Turn:
+        def stream_turn(
+            self,
+            user_input: str,
+            on_text: Callable[[str], None],
+            on_tool_call: Callable[[ToolCall], None] | None = None,
+        ) -> Turn:
             if error is not None:
                 raise error
+            for delta in deltas:
+                on_text(delta)
+            if on_tool_call is not None:
+                for call in tool_calls:
+                    on_tool_call(call)
             assert turn is not None
             return turn
 
@@ -60,27 +77,26 @@ def test_missing_api_key_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "api key" in result.stdout.lower()
 
 
-def test_runs_a_turn_and_renders_tool_trace_and_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "get_settings", lambda: _settings(api_key="key123"))
     turn = Turn(
         final_text="here are the files",
-        messages=(
-            Message.assistant(
-                content="",
-                tool_calls=(ToolCall(id="1", name="bash", arguments={"command": "ls"}),),
-            ),
-            Message.tool(tool_call_id="1", content="a.py", name="bash"),
-            Message.assistant(content="here are the files"),
-        ),
+        messages=(),
         usage=Usage(input_tokens=3, output_tokens=4),
     )
-    monkeypatch.setattr(app_module, "Agent", _fake_agent_class(turn=turn))
+    agent_cls = _fake_agent_class(
+        turn=turn,
+        deltas=("here ", "are the files"),
+        tool_calls=(ToolCall(id="1", name="bash", arguments={"command": "ls"}),),
+    )
+    monkeypatch.setattr(app_module, "Agent", agent_cls)
 
     result = runner.invoke(app, ["list files"])
 
     assert result.exit_code == 0
-    assert "here are the files" in result.stdout
-    assert "bash" in result.stdout  # the tool-call trace was rendered
+    assert "here are the files" in result.stdout  # streamed deltas
+    assert "bash" in result.stdout  # tool-call trace
+    assert "7 tokens used" in result.stdout
 
 
 def test_agent_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:

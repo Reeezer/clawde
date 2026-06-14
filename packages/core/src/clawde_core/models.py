@@ -101,6 +101,15 @@ class Completion(_Frozen):
     usage: Usage = Field(default_factory=Usage)
 
 
+class StreamChunk(_Frozen):
+    """One piece of a streamed reply: an incremental text delta, plus — on the
+    final chunk — the fully assembled :class:`Completion`.
+    """
+
+    text: str = ""
+    completion: Completion | None = None
+
+
 class ToolSpec(_Frozen):
     """A tool's advertisement to the model: its name, purpose, and JSON-Schema args."""
 

@@ -3,17 +3,17 @@
 Lazy-imports ``google-genai`` inside the call (the optional ``gemini`` extra,
 ADR-0003) so the base install stays SDK-free. Translates clawde's typed messages
 and tools into Gemini ``Content`` / ``Tool`` objects, calls ``generate_content``
-with *automatic* function calling disabled — clawde runs the loop itself — and
-normalises the reply (text, function calls, token usage) back into a
-:class:`~clawde_core.models.Completion`.
+(or ``generate_content_stream`` for SSE) with *automatic* function calling
+disabled — clawde runs the loop itself — and normalises the reply (text,
+function calls, token usage) back into clawde's models.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING
 
-from clawde_core.models import Completion, Message, Role, ToolCall, ToolSpec, Usage
+from clawde_core.models import Completion, Message, Role, StreamChunk, ToolCall, ToolSpec, Usage
 from clawde_core.providers.base import ModelProvider, ProviderError
 
 if TYPE_CHECKING:
@@ -36,18 +36,39 @@ class GeminiProvider(ModelProvider):
         self._client_cache: genai.Client | None = None
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
-        client = self._client()
-        from google.genai import types
-
-        config = types.GenerateContentConfig(
-            system_instruction=_system_instruction(messages),
-            tools=_to_gemini_tools(tools),  # type: ignore[arg-type]
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        )
-        response = client.models.generate_content(
-            model=self._model, contents=_to_contents(messages), config=config
+        response = self._client().models.generate_content(
+            model=self._model,
+            contents=_to_contents(messages),
+            config=_build_config(messages, tools),
         )
         return _to_completion(response)
+
+    def stream(
+        self, messages: Sequence[Message], tools: Sequence[ToolSpec]
+    ) -> Iterator[StreamChunk]:
+        text_parts: list[str] = []
+        calls: list[types.FunctionCall] = []
+        usage: types.GenerateContentResponseUsageMetadata | None = None
+        responses = self._client().models.generate_content_stream(
+            model=self._model,
+            contents=_to_contents(messages),
+            config=_build_config(messages, tools),
+        )
+        for response in responses:
+            delta = response.text or ""
+            if delta:
+                text_parts.append(delta)
+                yield StreamChunk(text=delta)
+            calls.extend(response.function_calls or [])
+            if response.usage_metadata is not None:
+                usage = response.usage_metadata
+        yield StreamChunk(
+            completion=Completion(
+                text="".join(text_parts),
+                tool_calls=_to_tool_calls(calls),
+                usage=_to_usage(usage),
+            )
+        )
 
     def _client(self) -> genai.Client:
         if self._client_cache is None:
@@ -66,6 +87,18 @@ def _ensure_sdk() -> None:
         raise ProviderError(
             "Gemini support needs the optional extra: install 'clawde-core[gemini]'."
         ) from exc
+
+
+def _build_config(
+    messages: Sequence[Message], tools: Sequence[ToolSpec]
+) -> types.GenerateContentConfig:
+    from google.genai import types
+
+    return types.GenerateContentConfig(
+        system_instruction=_system_instruction(messages),
+        tools=_to_gemini_tools(tools),  # type: ignore[arg-type]
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
 
 
 def _system_instruction(messages: Sequence[Message]) -> str | None:
@@ -126,15 +159,17 @@ def _to_gemini_tools(specs: Sequence[ToolSpec]) -> list[types.Tool] | None:
 
 
 def _to_completion(response: types.GenerateContentResponse) -> Completion:
-    calls = response.function_calls or []
-    tool_calls = tuple(
-        ToolCall(id=f"{call.name}-{index}", name=call.name or "", arguments=dict(call.args or {}))
-        for index, call in enumerate(calls)
-    )
     return Completion(
         text=response.text or "",
-        tool_calls=tool_calls,
+        tool_calls=_to_tool_calls(response.function_calls or []),
         usage=_to_usage(response.usage_metadata),
+    )
+
+
+def _to_tool_calls(function_calls: Sequence[types.FunctionCall]) -> tuple[ToolCall, ...]:
+    return tuple(
+        ToolCall(id=f"{call.name}-{index}", name=call.name or "", arguments=dict(call.args or {}))
+        for index, call in enumerate(function_calls)
     )
 
 

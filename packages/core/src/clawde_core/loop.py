@@ -2,7 +2,8 @@
 
 One hand-written cycle, no framework: assemble the conversation, call the model,
 and while it asks for tools, execute them and feed the results back, until it
-answers. The loop depends only on the
+answers. :meth:`Agent.run_turn` collects the whole reply; :meth:`Agent.stream_turn`
+surfaces it token-by-token as it arrives. The loop depends only on the
 :class:`~clawde_core.providers.base.ModelProvider` and
 :class:`~clawde_core.tools.base.Tool` ABCs — swapping the model or adding a tool
 never touches this file (see ``CLAUDE.md``, ADR-0003).
@@ -10,11 +11,11 @@ never touches this file (see ``CLAUDE.md``, ADR-0003).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from clawde_core.models import Message, ToolCall, ToolResult, ToolSpec, Usage
+from clawde_core.models import Completion, Message, ToolCall, ToolResult, ToolSpec, Usage
 from clawde_core.providers.base import ModelProvider
 from clawde_core.tools.base import Tool
 
@@ -53,12 +54,37 @@ class Agent:
         self._history: list[Message] = []
 
     def run_turn(self, user_input: str) -> Turn:
-        """Drive one turn to completion and return what happened."""
+        """Drive one turn to completion, collecting the whole reply."""
+        return self._drive(
+            user_input,
+            lambda: self._provider.complete(self._conversation(), self._specs()),
+        )
+
+    def stream_turn(
+        self,
+        user_input: str,
+        on_text: Callable[[str], None],
+        on_tool_call: Callable[[ToolCall], None] | None = None,
+    ) -> Turn:
+        """Drive one turn, streaming text deltas to ``on_text`` as they arrive and
+        announcing each tool call to ``on_tool_call`` before it runs."""
+        return self._drive(
+            user_input,
+            lambda: self._stream_completion(on_text),
+            on_tool_call=on_tool_call,
+        )
+
+    def _drive(
+        self,
+        user_input: str,
+        next_completion: Callable[[], Completion],
+        on_tool_call: Callable[[ToolCall], None] | None = None,
+    ) -> Turn:
         turn_start = len(self._history)
         self._history.append(Message.user(user_input))
         usage = Usage()
         for _ in range(self._max_iterations):
-            completion = self._provider.complete(self._conversation(), self._specs())
+            completion = next_completion()
             usage += completion.usage
             self._history.append(
                 Message.assistant(content=completion.text, tool_calls=completion.tool_calls)
@@ -70,6 +96,8 @@ class Agent:
                     usage=usage,
                 )
             for call in completion.tool_calls:
+                if on_tool_call is not None:
+                    on_tool_call(call)
                 result = self._execute(call)
                 self._history.append(
                     Message.tool(
@@ -77,6 +105,17 @@ class Agent:
                     )
                 )
         raise AgentError(f"agent did not answer within {self._max_iterations} iterations")
+
+    def _stream_completion(self, on_text: Callable[[str], None]) -> Completion:
+        final: Completion | None = None
+        for chunk in self._provider.stream(self._conversation(), self._specs()):
+            if chunk.text:
+                on_text(chunk.text)
+            if chunk.completion is not None:
+                final = chunk.completion
+        if final is None:
+            raise AgentError("provider stream ended without a completion")
+        return final
 
     def _conversation(self) -> list[Message]:
         return [Message.system(self._system_prompt), *self._history]

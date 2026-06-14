@@ -12,26 +12,33 @@ from clawde_core.providers.gemini import DEFAULT_MODEL, GeminiProvider
 
 
 class _FakeModels:
-    def __init__(self, response: object) -> None:
+    def __init__(self, response: object = None, chunks: list[object] | None = None) -> None:
         self.response = response
+        self.chunks = chunks
         self.calls: list[dict[str, object]] = []
 
     def generate_content(self, *, model: str, contents: object, config: object) -> object:
         self.calls.append({"model": model, "contents": contents, "config": config})
         return self.response
 
+    def generate_content_stream(self, *, model: str, contents: object, config: object) -> object:
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        return iter(self.chunks or [])
+
 
 class _FakeClient:
-    def __init__(self, response: object) -> None:
-        self.models = _FakeModels(response)
+    def __init__(self, response: object = None, chunks: list[object] | None = None) -> None:
+        self.models = _FakeModels(response, chunks)
 
 
 def _install_fake_client(
-    monkeypatch: pytest.MonkeyPatch, response: object
+    monkeypatch: pytest.MonkeyPatch,
+    response: object = None,
+    chunks: list[object] | None = None,
 ) -> tuple[_FakeClient, dict[str, int]]:
     from google import genai
 
-    client = _FakeClient(response)
+    client = _FakeClient(response, chunks)
     created = {"count": 0}
 
     def factory(**kwargs: object) -> _FakeClient:
@@ -181,6 +188,57 @@ def test_complete_normalises_function_calls_and_request(
     contents = client.models.calls[0]["contents"]
     assert isinstance(contents, list)
     assert len(contents) == 1  # only the user turn (system went to system_instruction)
+
+
+# --- stream(): SSE deltas + final completion ----------------------------------
+
+
+def test_stream_yields_deltas_then_final_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.genai import types
+
+    chunks: list[object] = [
+        SimpleNamespace(text="Hello ", function_calls=None, usage_metadata=None),
+        SimpleNamespace(
+            text="world",
+            function_calls=None,
+            usage_metadata=types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=4, candidates_token_count=2, cached_content_token_count=0
+            ),
+        ),
+    ]
+    client, _ = _install_fake_client(monkeypatch, chunks=chunks)
+    provider = GeminiProvider(api_key="key", model="gemini-2.5-flash")
+
+    out = list(provider.stream([Message.user("hi")], []))
+
+    assert [chunk.text for chunk in out if chunk.completion is None] == ["Hello ", "world"]
+    final = out[-1].completion
+    assert final is not None
+    assert final.text == "Hello world"
+    assert final.tool_calls == ()
+    assert final.usage == Usage(input_tokens=4, output_tokens=2)
+    assert client.models.calls[0]["model"] == "gemini-2.5-flash"
+
+
+def test_stream_collects_function_calls_without_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.genai import types
+
+    function_call = types.FunctionCall(name="bash", args={"command": "ls"})
+    chunks: list[object] = [
+        SimpleNamespace(text=None, function_calls=[function_call], usage_metadata=None)
+    ]
+    _install_fake_client(monkeypatch, chunks=chunks)
+    provider = GeminiProvider(api_key="key", model="gemini-2.5-flash")
+    spec = ToolSpec(name="bash", description="run", parameters={"type": "object"})
+
+    out = list(provider.stream([Message.user("x")], [spec]))
+
+    assert len(out) == 1  # no text deltas, just the terminal completion
+    final = out[0].completion
+    assert final is not None
+    assert [c.name for c in final.tool_calls] == ["bash"]
+    assert final.tool_calls[0].arguments == {"command": "ls"}
+    assert final.usage == Usage()
 
 
 @pytest.mark.integration
