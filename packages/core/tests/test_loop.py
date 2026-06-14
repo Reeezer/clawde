@@ -11,11 +11,12 @@ from clawde_core.models import (
     Message,
     Role,
     StreamChunk,
+    TokenBudget,
     ToolCall,
     ToolSpec,
     Usage,
 )
-from clawde_core.providers.base import ModelProvider
+from clawde_core.providers.base import DEFAULT_CONTEXT_WINDOW, ModelProvider
 from clawde_core.tools.base import Tool
 
 
@@ -260,3 +261,34 @@ def test_stream_turn_raises_if_stream_has_no_completion() -> None:
 
     with pytest.raises(AgentError, match="without a completion"):
         agent.stream_turn("hi", on_text=lambda _delta: None)
+
+
+def test_budget_grows_with_the_conversation() -> None:
+    provider = FakeProvider([Completion(text="first"), Completion(text="a longer second reply")])
+    agent = Agent(provider, [], system_prompt="system prompt")
+
+    agent.run_turn("hello")
+    after_one = agent.budget()
+    agent.run_turn("tell me more")
+    after_two = agent.budget()
+
+    assert after_one.limit == DEFAULT_CONTEXT_WINDOW
+    assert after_two.used > after_one.used  # more conversation => more tokens used
+
+
+def test_stream_turn_reports_budget_from_reported_usage() -> None:
+    first = Completion(
+        tool_calls=(ToolCall(id="c1", name="echo"),),
+        usage=Usage(input_tokens=100, output_tokens=10),
+    )
+    second = Completion(text="done", usage=Usage(input_tokens=120, output_tokens=5))
+    provider = FakeStreamingProvider(
+        [[StreamChunk(completion=first)], [StreamChunk(completion=second)]]
+    )
+    agent = Agent(provider, [RecordingTool(name="echo")], system_prompt="s")
+    budgets: list[TokenBudget] = []
+
+    agent.stream_turn("go", on_text=lambda _delta: None, on_budget=budgets.append)
+
+    assert [b.used for b in budgets] == [110, 125]  # input + output reported per model call
+    assert all(b.limit == DEFAULT_CONTEXT_WINDOW for b in budgets)
