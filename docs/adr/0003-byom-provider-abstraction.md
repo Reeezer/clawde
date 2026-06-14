@@ -24,9 +24,12 @@ models often can't emit native function calls and must be coaxed into JSON.
   model to emit a tool call as JSON, then parse it) for models without native
   support. A provider declares which it uses.
 - **Lazy SDK imports, optional extras.** `anthropic` / `openai` / `google-genai`
-  are imported *inside* their impl and shipped as extras; Ollama and
-  OpenAI-compatible endpoints use plain HTTP and need no extra. The base install
-  and the offline test path stay import-clean.
+  are imported *inside* their impl and shipped as extras. A single
+  `OpenAICompatibleProvider` uses the `openai` SDK for OpenAI *and* every
+  OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, …) via a configurable
+  `base_url` — so local models use the `openai` extra too (plain HTTP was
+  considered and dropped: the SDK absorbs the wire-format and streaming work).
+  The base install and the offline test path stay import-clean.
 
 ## Consequences
 

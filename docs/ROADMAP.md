@@ -32,8 +32,9 @@ loop, printing to stdout.
 Make the model swappable — the heart of BYOM. → ADR-0003.
 
 - `ModelProvider` ABC + `PROVIDERS` registry + factory from `Settings`.
-- Impls (lazy SDK imports, optional extras): Anthropic, OpenAI, Gemini, Ollama /
-  OpenAI-compatible (plain HTTP).
+- Impls (lazy SDK imports, optional extras): Anthropic, Gemini, and one
+  OpenAI-compatible provider covering OpenAI + Ollama / local endpoints via a
+  configurable `base_url`.
 - Normalise messages, **tool-calling (native *and* a JSON-in-text fallback for
   weak/local models)**, streaming, and token usage.
 - Multimodal input — images attached to a prompt, normalised per provider. → #6
