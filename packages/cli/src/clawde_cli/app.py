@@ -16,12 +16,13 @@ from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
+from clawde_core.config import get_settings
 from clawde_core.loop import Agent, AgentError
 from clawde_core.models import ImageContent, ToolCall
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.factory import build_provider
 from clawde_core.registry import RegistryError
-from clawde_core.tools.bash import BashTool
+from clawde_core.tools.registry import build_tools
 from rich.console import Console
 
 from clawde_cli import __version__
@@ -79,7 +80,7 @@ def _run_turn(
         model_provider = build_provider(provider, model)
     except (ProviderError, RegistryError) as exc:
         _fail(str(exc))
-    agent = Agent(model_provider, [BashTool()], system_prompt=_system_prompt())
+    agent = Agent(model_provider, build_tools(get_settings()), system_prompt=_system_prompt())
     try:
         turn = agent.stream_turn(
             prompt, on_text=_emit_text, on_tool_call=_emit_tool_call, images=images
@@ -132,7 +133,8 @@ def _emit_tool_call(call: ToolCall) -> None:
 def _system_prompt() -> str:
     return (
         "You are clawde, a coding agent working in a terminal on "
-        f"{platform.system()}. You have a `bash` tool that runs shell commands. "
-        "Use it to inspect the project and accomplish the user's request, then "
-        "reply with a concise final answer."
+        f"{platform.system()}. You have tools to read, write, and edit files, to "
+        "find files (glob) and search their contents (grep), and to run shell "
+        "commands (bash). Use them to inspect the project and accomplish the "
+        "user's request, then reply with a concise final answer."
     )

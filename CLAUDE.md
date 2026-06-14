@@ -89,6 +89,10 @@ usable as a library, independent of the terminal UI.
 `develop`, or `(feature|release|hotfix|nightly)/<slug>`.
 → [ADR-0002](docs/adr/0002-gitflow-branching-strategy.md)
 
+**Parallel sessions:** run concurrent CLI sessions in separate git worktrees, one
+per `feature/*` branch — `.venv`/`.env` are per-worktree. → README *Parallel
+sessions (git worktrees)*.
+
 **Commits (Conventional Commits):** `<type>(<optional scope>): <description>`,
 subject ≤ 72 chars. Types: `feat fix refactor docs test chore perf ci build style
 revert`. Merge / `Revert` / `fixup!` / `squash!` commits are exempt.

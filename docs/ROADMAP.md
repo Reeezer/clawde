@@ -17,7 +17,7 @@ The repo and its rails. **Done.**
 - pre-commit, CI (cross-platform matrix), Gitflow + guard, ADRs, `.env`/settings.
 - `Registry[T]` backbone; a runnable `clawde` command.
 
-## Phase 1 — Minimal agent loop (vertical slice) 🔜
+## Phase 1 — Minimal agent loop (vertical slice) ✅
 
 The smallest thing that *is* an agent: one hard-coded provider + one tool + the
 loop, printing to stdout.
@@ -27,7 +27,7 @@ loop, printing to stdout.
 - The loop: call → tool calls → execute → feed back → repeat → answer.
 - **Done when:** `clawde "list the python files"` completes a real tool-using turn.
 
-## Phase 2 — BYOM provider abstraction
+## Phase 2 — BYOM provider abstraction 🔜
 
 Make the model swappable — the heart of BYOM. → ADR-0003.
 
@@ -40,12 +40,13 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
 - Multimodal input — images attached to a prompt, normalised per provider. → #6
 - **Done when:** the same task runs against ≥2 providers via `--provider`.
 
-## Phase 3 — Tool system
+## Phase 3 — Tool system ✅
 
 - `Tool` ABC + `TOOLS` registry + JSON-Schema params + dispatch / validation. → #2
 - Core tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`. → #3 (read/write/glob/grep)
-- The `edit` apply logic (exact match → unique-match guard → fuzzy) — the
-  deceptively hard one; budget for it. → #4
+- The `edit` apply logic (exact match → unique-match guard) — the deceptively hard
+  one. Shipped exact + unique-guard; whitespace-tolerant *fuzzy* matching is
+  deferred to a follow-up (it can silently corrupt files). → #4
 - **Done when:** the agent can read, search, and safely edit files end-to-end.
 
 ## Phase 4 — Context management

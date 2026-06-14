@@ -17,14 +17,17 @@ def _completed(
     )
 
 
-def test_spec_advertises_command_parameter() -> None:
+def test_spec_advertises_a_non_empty_command_parameter() -> None:
     spec = BashTool().spec
     assert spec.name == "bash"
     assert spec.parameters["required"] == ["command"]
+    properties = spec.parameters["properties"]
+    assert isinstance(properties, dict)
+    assert properties["command"]["minLength"] == 1
 
 
 @pytest.mark.parametrize("arguments", [{}, {"command": ""}, {"command": 123}])
-def test_run_rejects_invalid_command(
+def test_invoke_rejects_invalid_command_without_running(
     arguments: Mapping[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     called = False
@@ -35,7 +38,7 @@ def test_run_rejects_invalid_command(
         return _completed()
 
     monkeypatch.setattr(subprocess, "run", _fail)
-    result = BashTool().run(arguments)
+    result = BashTool().invoke(arguments)
     assert result.startswith("Error:")
     assert called is False
 

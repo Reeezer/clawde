@@ -2,7 +2,10 @@
 
 Prefers a real ``bash`` (so commands stay portable, e.g. Git Bash on Windows),
 falling back to the platform's default shell. Unsandboxed by design: permission
-gating and sandboxing arrive in Phase 5 (see ``docs/ROADMAP.md``).
+gating and sandboxing arrive in Phase 5 (see ``docs/ROADMAP.md``). Argument
+validation (``command`` present and non-empty) is handled centrally by
+:meth:`~clawde_core.tools.base.Tool.invoke` against the schema below, so ``run``
+trusts its input.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from collections.abc import Mapping
 
 from clawde_core.models import ToolSpec
 from clawde_core.tools.base import Tool
+from clawde_core.tools.registry import TOOLS
 
 _TIMEOUT_SECONDS = 120
 
@@ -28,12 +32,18 @@ _SPEC = ToolSpec(
         "properties": {
             "command": {
                 "type": "string",
+                "minLength": 1,
                 "description": "The shell command to execute.",
             }
         },
         "required": ["command"],
     },
 )
+
+
+@TOOLS.register("bash")
+def _build_bash() -> Tool:
+    return BashTool()
 
 
 class BashTool(Tool):
@@ -44,9 +54,7 @@ class BashTool(Tool):
         return _SPEC
 
     def run(self, arguments: Mapping[str, object]) -> str:
-        command = arguments.get("command")
-        if not isinstance(command, str) or not command.strip():
-            return "Error: 'command' must be a non-empty string."
+        command = str(arguments["command"])
         bash = shutil.which("bash")
         try:
             if bash is not None:
