@@ -115,38 +115,46 @@ class Agent:
         turn_start = len(self._history)
         self._history.append(Message.user(user_input, images=images))
         usage = Usage()
-        for _ in range(self._max_iterations):
-            completion = next_completion()
-            usage += completion.usage
-            if on_usage is not None:
-                on_usage(usage)
-            if on_budget is not None:
-                on_budget(self._reported_budget(completion.usage))
-            self._history.append(
-                Message.assistant(
-                    content=completion.text,
-                    tool_calls=completion.tool_calls,
-                    thinking=completion.thinking,
-                )
-            )
-            if not completion.tool_calls:
-                return Turn(
-                    final_text=completion.text,
-                    messages=self._history.since(turn_start),
-                    usage=usage,
-                )
-            for call in completion.tool_calls:
-                if on_tool_call is not None:
-                    on_tool_call(call)
-                result = self._execute(call)
-                if on_tool_result is not None:
-                    on_tool_result(result)
+        try:
+            for _ in range(self._max_iterations):
+                completion = next_completion()
+                usage += completion.usage
+                if on_usage is not None:
+                    on_usage(usage)
+                if on_budget is not None:
+                    on_budget(self._reported_budget(completion.usage))
                 self._history.append(
-                    Message.tool(
-                        tool_call_id=result.tool_call_id, content=result.content, name=call.name
+                    Message.assistant(
+                        content=completion.text,
+                        tool_calls=completion.tool_calls,
+                        thinking=completion.thinking,
                     )
                 )
-        raise AgentError(f"agent did not answer within {self._max_iterations} iterations")
+                if not completion.tool_calls:
+                    return Turn(
+                        final_text=completion.text,
+                        messages=self._history.since(turn_start),
+                        usage=usage,
+                    )
+                for call in completion.tool_calls:
+                    if on_tool_call is not None:
+                        on_tool_call(call)
+                    result = self._execute(call)
+                    if on_tool_result is not None:
+                        on_tool_result(result)
+                    self._history.append(
+                        Message.tool(
+                            tool_call_id=result.tool_call_id,
+                            content=result.content,
+                            name=call.name,
+                        )
+                    )
+            raise AgentError(f"agent did not answer within {self._max_iterations} iterations")
+        except KeyboardInterrupt:
+            # A Ctrl-C mid-turn rolls the half-built turn out of history, so the
+            # next turn isn't left with a dangling user message (the REPL, #10).
+            self._history.truncate(turn_start)
+            raise
 
     def _stream_completion(self, on_text: Callable[[str], None]) -> Completion:
         final: Completion | None = None

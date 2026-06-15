@@ -36,5 +36,10 @@ class History:
         """The messages appended at or after index ``start`` (e.g. one turn)."""
         return tuple(self._messages[start:])
 
+    def truncate(self, length: int) -> None:
+        """Drop every message from index ``length`` on — e.g. to roll back an
+        interrupted turn so the conversation has no half-built tail."""
+        del self._messages[length:]
+
     def __len__(self) -> int:
         return len(self._messages)

@@ -94,6 +94,38 @@ def test_clear_resets_the_conversation_history() -> None:
     assert any("what now" in message.content for message in second_sent)
 
 
+class _InterruptOnceProvider(ModelProvider):
+    """Raises KeyboardInterrupt on the first call, then answers normally."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.received: list[tuple[Message, ...]] = []
+
+    @property
+    def model(self) -> str:
+        return "interrupt-1"
+
+    def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
+        self.received.append(tuple(messages))
+        self.calls += 1
+        if self.calls == 1:
+            raise KeyboardInterrupt
+        return Completion(text="ok")
+
+
+def test_keyboard_interrupt_rolls_back_the_interrupted_turn() -> None:
+    provider = _InterruptOnceProvider()
+    agent = Agent(provider, [], system_prompt="sys")
+    with pytest.raises(KeyboardInterrupt):
+        agent.run_turn("cancelled")
+
+    agent.run_turn("next one")
+
+    # The cancelled turn left no trace: the second turn carries only its own user message.
+    user_messages = [m.content for m in provider.received[-1] if m.role is Role.USER]
+    assert user_messages == ["next one"]
+
+
 def test_answers_without_tools() -> None:
     provider = FakeProvider(
         [Completion(text="hello", usage=Usage(input_tokens=5, output_tokens=2))]
