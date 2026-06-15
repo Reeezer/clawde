@@ -31,6 +31,10 @@ class FakeProvider(ModelProvider):
         self._queue = list(completions)
         self.received: list[tuple[Message, ...]] = []
 
+    @property
+    def model(self) -> str:
+        return "fake-1"
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self.received.append(tuple(messages))
         return self._queue.pop(0)
@@ -41,6 +45,10 @@ class FakeStreamingProvider(ModelProvider):
 
     def __init__(self, scripts: Sequence[Sequence[StreamChunk]]) -> None:
         self._scripts = [list(script) for script in scripts]
+
+    @property
+    def model(self) -> str:
+        return "fake-stream-1"
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         raise NotImplementedError  # streaming tests exercise stream() only
@@ -66,6 +74,24 @@ class RecordingTool(Tool):
     def run(self, arguments: Mapping[str, object]) -> str:
         self.calls.append(dict(arguments))
         return self._output
+
+
+def test_clear_resets_the_conversation_history() -> None:
+    provider = FakeProvider(
+        [
+            Completion(text="first", usage=Usage(output_tokens=1)),
+            Completion(text="second", usage=Usage(output_tokens=1)),
+        ]
+    )
+    agent = Agent(provider, [], system_prompt="sys")
+    agent.run_turn("remember apples")
+    agent.clear()
+
+    agent.run_turn("what now")
+
+    second_sent = provider.received[-1]
+    assert all("apples" not in message.content for message in second_sent)
+    assert any("what now" in message.content for message in second_sent)
 
 
 def test_answers_without_tools() -> None:

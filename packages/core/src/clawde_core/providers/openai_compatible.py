@@ -83,6 +83,10 @@ class OpenAICompatibleProvider(ModelProvider):
         self._base_url = base_url
         self._client_cache: OpenAI | None = None
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         response = self._client().chat.completions.create(**self._request(messages, tools))
         return _to_completion(response)

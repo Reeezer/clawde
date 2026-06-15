@@ -63,6 +63,10 @@ class Agent:
         self._max_iterations = max_iterations
         self._history = History()
 
+    def clear(self) -> None:
+        """Drop the conversation, starting the next turn fresh (the ``/clear`` command)."""
+        self._history = History()
+
     def run_turn(self, user_input: str, *, images: tuple[ImageContent, ...] = ()) -> Turn:
         """Drive one turn to completion, collecting the whole reply."""
         return self._drive(

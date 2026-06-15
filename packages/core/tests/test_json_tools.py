@@ -32,6 +32,10 @@ class _Inner(ModelProvider):
         self.seen: tuple[Message, ...] = ()
         self.saw_tools: tuple[ToolSpec, ...] = ()
 
+    @property
+    def model(self) -> str:
+        return "inner-1"
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self.seen = tuple(messages)
         self.saw_tools = tuple(tools)
@@ -117,6 +121,10 @@ class _WindowingInner(ModelProvider):
     def __init__(self) -> None:
         self.counted: tuple[tuple[Message, ...], tuple[ToolSpec, ...]] | None = None
 
+    @property
+    def model(self) -> str:
+        return "windowing-1"
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         return Completion()
 
@@ -131,6 +139,10 @@ class _WindowingInner(ModelProvider):
 
 def test_context_window_delegates_to_the_inner_provider() -> None:
     assert JsonToolCallingProvider(_WindowingInner()).context_window == 4242
+
+
+def test_model_delegates_to_the_inner_provider() -> None:
+    assert JsonToolCallingProvider(_Inner(Completion(text="x"))).model == "inner-1"
 
 
 def test_count_tokens_counts_the_shaped_conversation_with_no_native_tools() -> None:
