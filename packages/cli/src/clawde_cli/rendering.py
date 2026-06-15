@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from clawde_core.models import ToolCall, ToolResult, Usage
+from clawde_core.models import TokenBudget, ToolCall, ToolResult, Usage
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.live import Live
 from rich.markdown import CodeBlock, ListItem, Markdown, MarkdownElement
@@ -200,10 +200,17 @@ class ReplyRenderer:
         self._live: Live | None = None
         self._pending_call: ToolCall | None = None
         self._emitted = False
+        self._budget: TokenBudget | None = None
 
-    def begin(self) -> None:
-        """Open the turn: show the working spinner until the first output arrives."""
+    def begin(self, context_window: int | None = None) -> None:
+        """Open the turn: show the working spinner until the first output arrives.
+
+        ``context_window`` (the model's window, known upfront) seeds the spinner's
+        ``ctx –/limit`` placeholder until the first reply reports real usage.
+        """
         self._status.start()
+        if context_window is not None:
+            self._status.set_context_window(context_window)
         self._ensure_live()
 
     def on_text(self, delta: str) -> None:
@@ -216,6 +223,13 @@ class ReplyRenderer:
     def on_usage(self, usage: Usage) -> None:
         """Update the running token usage shown on the spinner."""
         self._status.update(usage)
+        if self._live is not None and not self._buffer:
+            self._live.refresh()
+
+    def on_budget(self, budget: TokenBudget) -> None:
+        """Update the running context read (``ctx used/limit``) shown on the spinner."""
+        self._budget = budget
+        self._status.set_budget(budget)
         if self._live is not None and not self._buffer:
             self._live.refresh()
 
@@ -244,6 +258,11 @@ class ReplyRenderer:
     def elapsed(self) -> float:
         """Seconds elapsed since the turn began (for the closing summary)."""
         return self._status.elapsed()
+
+    def context_budget(self) -> TokenBudget | None:
+        """The most recent context read seen this turn — ``None`` before any model
+        call — so the closing summary can show the same ``ctx used/limit``."""
+        return self._budget
 
     def _ensure_live(self) -> Live:
         if self._live is None:

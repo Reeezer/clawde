@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from clawde_core.models import ToolCall, ToolResult, Usage
+from clawde_core.models import TokenBudget, ToolCall, ToolResult, Usage
 from rich.color import Color
 from rich.console import Console, RenderableType
 from rich.segment import Segment
@@ -25,7 +25,7 @@ from clawde_cli.rendering import (
     result_point_style,
     step_block,
 )
-from clawde_cli.status import SPINNER_GLYPH, StatusReporter
+from clawde_cli.status import SPINNER_FRAMES, StatusReporter
 
 
 def _render(markup: str) -> list[Segment]:
@@ -180,7 +180,7 @@ def test_text_step_persists_behind_a_point() -> None:
     out = console.export_text()
     assert "Hello world" in out
     assert STEP_GLYPH in out  # the white step point sits beside the text
-    assert SPINNER_GLYPH not in out  # the spinner left no trace
+    assert not any(frame in out for frame in SPINNER_FRAMES)  # the spinner left no trace
 
 
 def test_steps_are_separated_by_a_blank_line() -> None:
@@ -245,7 +245,7 @@ def test_text_free_tool_turn_leaves_no_spinner() -> None:
 
     out = console.export_text()
     assert out.index("bash") < out.index("ok")
-    assert SPINNER_GLYPH not in out
+    assert not any(frame in out for frame in SPINNER_FRAMES)
 
 
 def test_on_usage_refreshes_the_live_spinner() -> None:
@@ -263,6 +263,53 @@ def test_on_usage_refreshes_the_live_spinner() -> None:
 def test_on_usage_is_safe_with_no_live_region() -> None:
     renderer = ReplyRenderer(_recording_console(), status=_stub_status())
     renderer.on_usage(Usage(output_tokens=5))  # no begin(): nothing to refresh
+
+
+def test_on_budget_shows_the_context_read_on_the_spinner() -> None:
+    console = _recording_console()
+    status = _stub_status()
+    renderer = ReplyRenderer(console, status=status)
+
+    renderer.begin()  # spinner active, no text yet
+    renderer.on_budget(TokenBudget(limit=1_048_576, used=24100))
+    renderer.finish()
+
+    assert "ctx 24.1k/1M" in status.__rich__().plain
+
+
+def test_on_budget_is_safe_with_no_live_region() -> None:
+    renderer = ReplyRenderer(_recording_console(), status=_stub_status())
+    renderer.on_budget(TokenBudget(limit=1_048_576, used=10))  # no begin(): nothing to refresh
+
+
+def test_begin_seeds_the_pending_context_window() -> None:
+    status = _stub_status()
+    renderer = ReplyRenderer(_recording_console(), status=status)
+
+    renderer.begin(1_048_576)  # window known upfront, before any reply
+    assert "ctx –/1M" in status.__rich__().plain
+
+    renderer.finish()
+
+
+def test_on_budget_does_not_refresh_while_text_streams() -> None:
+    console = _recording_console()
+    renderer = ReplyRenderer(console, status=_stub_status())
+
+    renderer.begin()
+    renderer.on_text("streaming")
+    renderer.on_budget(TokenBudget(limit=1_048_576, used=24100))  # buffer non-empty: spinner hidden
+    renderer.finish()
+
+    assert "streaming" in console.export_text()
+
+
+def test_context_budget_exposes_the_last_seen_read() -> None:
+    renderer = ReplyRenderer(_recording_console(), status=_stub_status())
+    assert renderer.context_budget() is None  # before any model call
+
+    renderer.on_budget(TokenBudget(limit=1_048_576, used=24100))
+    assert renderer.context_budget() == TokenBudget(limit=1_048_576, used=24100)
 
 
 def test_on_usage_does_not_refresh_while_text_streams() -> None:
