@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from clawde_core.models import TokenBudget, ToolCall, ToolResult, Usage
+from clawde_core.models import CompactionEvent, TokenBudget, ToolCall, ToolResult, Usage
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.live import Live
 from rich.markdown import CodeBlock, ListItem, Markdown, MarkdownElement
@@ -22,7 +22,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
-from clawde_cli.status import REFRESH_PER_SECOND, StatusReporter
+from clawde_cli.status import REFRESH_PER_SECOND, StatusReporter, format_token_count
 
 # clawde's reply palette — named so colours are never magic values (CLAUDE.md).
 INLINE_CODE_STYLE = "#c3a6ff"  # pastel purple
@@ -37,6 +37,7 @@ STEP_TEXT_STYLE = "white"
 STEP_RUNNING_STYLE = "dim"
 STEP_OK_STYLE = "green"
 STEP_FAIL_STYLE = "red"
+STEP_COMPACT_STYLE = "cyan"  # the point beside a context-compaction step
 LIST_BULLET = "-"  # markdown unordered-list marker (smaller than the step point)
 
 TOOL_RESULT_GLYPH = "›"
@@ -137,6 +138,18 @@ def format_tool_result(result: ToolResult) -> Text:
     return line
 
 
+def format_compaction(event: CompactionEvent) -> Text:
+    """Render a one-line note that the context was compacted: before → after."""
+    before = format_token_count(event.tokens_before)
+    after = format_token_count(event.tokens_after)
+    line = Text("Compacted context", style="tool.name")
+    line.append(
+        f"  {event.messages_before}→{event.messages_after} msgs, {before}→{after} tokens",
+        style="tool.result",
+    )
+    return line
+
+
 def step_block(dot_style: str, body: RenderableType) -> Table:
     """Lay out a step: a coloured leading point in a gutter beside ``body``."""
     grid = Table.grid(padding=(0, 1, 0, 0))
@@ -232,6 +245,14 @@ class ReplyRenderer:
         self._status.set_budget(budget)
         if self._live is not None and not self._buffer:
             self._live.refresh()
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        """Show a compaction step — old turns were summarised to fit the window."""
+        self._commit()
+        self._separate()
+        self._console.print(step_block(STEP_COMPACT_STYLE, format_compaction(event)))
+        self._emitted = True
+        self._ensure_live()
 
     def on_tool_call(self, call: ToolCall) -> None:
         """Show the call launching — live, with the spinner beneath it."""

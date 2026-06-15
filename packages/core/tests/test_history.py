@@ -33,7 +33,32 @@ def test_messages_is_an_immutable_snapshot() -> None:
     assert history.messages == (Message.user("a"), Message.user("b"))
 
 
-def test_since_returns_messages_from_an_index() -> None:
-    history = History([Message.user("a"), Message.assistant("b"), Message.user("c")])
-    assert history.since(1) == (Message.assistant("b"), Message.user("c"))
-    assert history.since(3) == ()  # past the end is empty, not an error
+def test_turns_of_empty_history_is_empty() -> None:
+    assert History().turns() == ()
+
+
+def test_turns_groups_messages_on_user_boundaries() -> None:
+    history = History(
+        [
+            Message.user("a"),
+            Message.assistant("a1"),
+            Message.tool(tool_call_id="t1", content="result", name="echo"),
+            Message.user("b"),
+            Message.assistant("b1"),
+        ]
+    )
+
+    turns = history.turns()
+
+    assert len(turns) == 2
+    assert [m.content for m in turns[0]] == ["a", "a1", "result"]  # call + result stay together
+    assert [m.content for m in turns[1]] == ["b", "b1"]
+
+
+def test_turns_keeps_a_leading_non_user_run_as_one_group() -> None:
+    history = History([Message.assistant("recap"), Message.user("go on")])
+
+    turns = history.turns()
+
+    assert [m.content for m in turns[0]] == ["recap"]
+    assert [m.content for m in turns[1]] == ["go on"]

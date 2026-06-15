@@ -24,8 +24,9 @@ ADRs, and Gitflow.
 
 The defining pattern, borrowed from compass: **every swappable stage is an ABC
 behind a named `Registry`**, resolved by a factory from `Settings`. Adding a model
-provider or a tool = subclass the ABC in its own file + register a builder; the
-orchestrator never changes. → [ADR-0003](docs/adr/0003-byom-provider-abstraction.md)
+provider, a tool, or a compaction strategy = subclass the ABC in its own file +
+register a builder; the orchestrator never changes.
+→ [ADR-0003](docs/adr/0003-byom-provider-abstraction.md)
 
 1. **ABCs are the contract.** Touch a stage → read its base first.
 2. **One implementation per file** (`providers/anthropic.py`, `tools/bash.py`).
@@ -41,10 +42,10 @@ orchestrator never changes. → [ADR-0003](docs/adr/0003-byom-provider-abstracti
 uv workspace, two packages:
 
 ```
-packages/core/src/clawde_core/   the engine: registry, config, (soon) models,
-                                 providers/, tools/, the agent loop, context
-packages/cli/src/clawde_cli/     the terminal app: Typer entry, (soon) REPL,
-                                 rendering, slash commands, permission prompts
+packages/core/src/clawde_core/   the engine: registry, config, models, providers/,
+                                 tools/, the agent loop, context/ (history, compaction)
+packages/cli/src/clawde_cli/     the terminal app: Typer entry, rendering, the status
+                                 line; (soon) REPL, slash commands, permission prompts
 docs/adr/   docs/ROADMAP.md   CONTEXT.md
 ```
 
@@ -109,6 +110,11 @@ revert`. Merge / `Revert` / `fixup!` / `squash!` commits are exempt.
 commit-msg, pre-push) via `default_install_hook_types`. Re-apply branch
 protection with `bash docs/setup-gitflow.sh <owner/repo>`.
 
+**Before opening a PR, make the docs current.** A PR must never land stale
+documentation: update [ROADMAP](docs/ROADMAP.md) phase markers, the [CONTEXT](CONTEXT.md)
+vocabulary, an ADR for any non-trivial decision, and the README / this file's status
+so they describe what the PR actually changes.
+
 ## Design discipline
 
 Prioritise design over speed. **Fix the root cause, not the symptom.** Reach for
@@ -138,3 +144,4 @@ guardrail, not an obstacle. The documented escape hatch for bulk setup is
 - Don't special-case one provider/tool in the loop — fix the abstraction.
 - Don't bypass the commit-msg / branch-name hooks with `--no-verify`.
 - Don't evade the fact-forcing gate (GateGuard) — state the facts and retry.
+- Don't open a PR with stale docs — refresh ROADMAP / CONTEXT / ADRs (and README) first.

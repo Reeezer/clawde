@@ -114,6 +114,20 @@ class TokenBudget(_Frozen):
         return self.used / self.limit
 
 
+class CompactionEvent(_Frozen):
+    """What one compaction did: the conversation shrank from ``messages_before``
+    to ``messages_after`` messages and from ``tokens_before`` to ``tokens_after``
+    input tokens. The loop emits it when it summarises old turns so the CLI can
+    show the compaction; ``tokens_before`` is the reported figure that crossed the
+    threshold, ``tokens_after`` an exact recount of the compacted conversation.
+    """
+
+    messages_before: int
+    messages_after: int
+    tokens_before: int
+    tokens_after: int
+
+
 class ImageContent(_Frozen):
     """An image attached to a user message: raw bytes plus their media type.
 

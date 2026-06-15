@@ -45,8 +45,13 @@ CONTEXT.md in spirit: name the domain once, then use it everywhere.)
 
 - **Context window** — the bounded set of tokens sent to the model each call:
   system prompt + tool specs + conversation history.
-- **Compaction** — summarising/dropping old history when it no longer fits the
-  window, preserving recent and pinned content.
+- **Compaction** — summarising old turns when the conversation nears the window,
+  keeping the recent turns and replacing the older ones with a model-written recap.
+  → ADR-0005.
+- **Compactor** — the swappable stage that performs compaction, behind the
+  `Compactor` ABC in the `COMPACTORS` registry (`summarise` / `off`), chosen from
+  `Settings`. The loop runs it at most once per turn, when the budget crosses a
+  threshold.
 - **Session** — one persisted conversation (history + state) that can be resumed.
 - **Project memory** — repo-local guidance the agent loads (clawde's own
   `CLAUDE.md` convention).

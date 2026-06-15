@@ -18,6 +18,7 @@ from typing import Annotated, NoReturn
 
 import typer
 from clawde_core.config import get_settings
+from clawde_core.context.compaction.factory import build_compactor
 from clawde_core.loop import Agent, AgentError
 from clawde_core.models import ImageContent, ReasoningEffort
 from clawde_core.providers.base import ProviderError
@@ -93,7 +94,14 @@ def _run_turn(
         _fail(str(exc))
     if effort is not None:
         model_provider.set_reasoning_effort(effort)
-    agent = Agent(model_provider, build_tools(get_settings()), system_prompt=_system_prompt())
+    settings = get_settings()
+    agent = Agent(
+        model_provider,
+        build_tools(settings),
+        system_prompt=_system_prompt(),
+        compactor=build_compactor(settings),
+        compaction_threshold=settings.compaction.threshold,
+    )
     renderer = ReplyRenderer(console)
     renderer.begin(model_provider.context_window)
     try:
@@ -104,6 +112,7 @@ def _run_turn(
             on_tool_result=renderer.on_tool_result,
             on_usage=renderer.on_usage,
             on_budget=renderer.on_budget,
+            on_compaction=renderer.on_compaction,
             images=images,
         )
     except (ProviderError, AgentError) as exc:

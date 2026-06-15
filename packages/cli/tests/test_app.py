@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from clawde_core.loop import AgentError, Turn
 from clawde_core.models import (
+    CompactionEvent,
     ImageContent,
     ReasoningEffort,
     TokenBudget,
@@ -50,6 +51,7 @@ def _fake_agent_class(
     tool_calls: tuple[ToolCall, ...] = (),
     record_images: list[ImageContent] | None = None,
     budget: TokenBudget | None = None,
+    compaction: CompactionEvent | None = None,
 ) -> type:
     class _FakeAgent:
         def __init__(
@@ -59,6 +61,8 @@ def _fake_agent_class(
             *,
             system_prompt: str,
             max_iterations: int = 25,
+            compactor: object = None,
+            compaction_threshold: float = 1.0,
         ) -> None:
             self.system_prompt = system_prompt
 
@@ -70,6 +74,7 @@ def _fake_agent_class(
             on_tool_result: Callable[[ToolResult], None] | None = None,
             on_usage: Callable[[Usage], None] | None = None,
             on_budget: Callable[[TokenBudget], None] | None = None,
+            on_compaction: Callable[[CompactionEvent], None] | None = None,
             *,
             images: tuple[ImageContent, ...] = (),
         ) -> Turn:
@@ -77,6 +82,8 @@ def _fake_agent_class(
                 record_images.extend(images)
             if error is not None:
                 raise error
+            if on_compaction is not None and compaction is not None:
+                on_compaction(compaction)
             for delta in deltas:
                 on_text(delta)
             for call in tool_calls:
@@ -164,6 +171,26 @@ def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "here are the files" in result.stdout  # streamed deltas
     assert "bash" in result.stdout  # tool-call trace
     assert "↑ 3 ↓ 4 tokens" in result.stdout  # closing summary (sent / received)
+
+
+def test_compaction_event_is_rendered(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(monkeypatch)
+    turn = Turn(final_text="done", messages=(), usage=Usage(input_tokens=1, output_tokens=1))
+    agent_cls = _fake_agent_class(
+        turn=turn,
+        deltas=("done",),
+        compaction=CompactionEvent(
+            messages_before=40, messages_after=8, tokens_before=120000, tokens_after=9000
+        ),
+    )
+    monkeypatch.setattr(app_module, "Agent", agent_cls)
+
+    result = runner.invoke(app, ["keep going"])
+
+    assert result.exit_code == 0
+    assert "Compacted context" in result.stdout
+    assert "40→8 msgs" in result.stdout
+    assert "120.0k→9.0k tokens" in result.stdout
 
 
 def test_summary_shows_the_context_read(monkeypatch: pytest.MonkeyPatch) -> None:
