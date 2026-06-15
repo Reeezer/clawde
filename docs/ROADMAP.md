@@ -63,13 +63,21 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
 - Secret-file read protection — tools refuse to read `.env` & configured secrets. → #5
 - **Done when:** mutating tools require approval unless explicitly trusted.
 
-## Phase 6 — Interactive REPL / TUI
+## Phase 6 — Interactive REPL / TUI 🚧
 
-- A real REPL (prompt_toolkit) with streaming render (rich), markdown, tool-call
-  display, slash commands, and clean Ctrl-C interrupts.
-- Output presentation, landable ahead of the full REPL: markdown/colour rendering
-  (→ #7), tool-call formatting (→ #8), a live status spinner with elapsed time &
-  token count (→ #9).
+- A real REPL (prompt_toolkit) — **shipped**: `clawde` with no prompt drops into a
+  multi-turn session with streaming render, clean Ctrl-C (the interrupted turn is
+  rolled out of history) and Ctrl-D / `/exit` (→ #10 ✅); a slash-command registry
+  — `/help /model /effort /usage /clear /compact /exit` — intercepted before the
+  model (→ #11 ✅), including the `/effort` runtime reasoning toggle (→ #15 ✅); a
+  session status header (branch/worktree · title · model · effort → #12 ✅); and a
+  bell + colour-coded marker so a finished parallel session gets noticed (→ #13 ✅).
+- Output presentation, landed ahead of the REPL: markdown/colour rendering
+  (→ #7 ✅), tool-call formatting (→ #8 ✅), a live status spinner with elapsed time &
+  token count (→ #9 ✅).
+- **Still open:** interleaved & pasted images in the REPL — the ordered
+  content-block refactor (→ #16 ⏳); `/compact` is a friendly stub until Phase 4
+  compaction lands (→ #23).
 - **Done when:** `clawde` is a pleasant multi-turn interactive session.
 
 ## Phase 7 — Persistence, sessions & project memory
