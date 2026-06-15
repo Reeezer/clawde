@@ -1,7 +1,8 @@
 """The working-status line: a spinner, a whimsical verb, elapsed time, tokens.
 
 While the agent thinks or runs a tool, clawde shows a single live line like
-``✻ Wandering… (8m 36s · ↓ 46.3k tokens)`` to signal progress. This module owns
+``✻ Wandering… (8m 36s · ↑ 12.0k ↓ 1.5k tokens)`` to signal progress: ``↑`` is the
+tokens sent to the model so far this turn, ``↓`` the tokens received. This module owns
 that line's *content*; :mod:`clawde_cli.rendering` owns *when* it is shown (one
 shared live region — it never competes with the streamed markdown).
 
@@ -20,7 +21,8 @@ from clawde_core.models import Usage
 from rich.text import Text
 
 SPINNER_GLYPH = "✻"
-RECEIVED_GLYPH = "↓"  # tokens received from the model (output tokens)
+SENT_GLYPH = "↑"  # tokens sent to the model so far this turn (input tokens)
+RECEIVED_GLYPH = "↓"  # tokens received from the model so far this turn (output tokens)
 SPINNER_STYLE = "#c3a6ff"  # pastel purple, matching the inline-code accent
 VERB_STYLE = "bold"
 DETAIL_STYLE = "dim"
@@ -59,9 +61,16 @@ def format_token_count(tokens: int) -> str:
     return f"{tokens / _TOKENS_PER_K:.1f}k"
 
 
-def format_summary(elapsed: float, tokens: int) -> Text:
-    """A turn's closing line — wall-clock time and tokens used, in pastel yellow."""
-    summary = f"Done in {format_elapsed(elapsed)} · {format_token_count(tokens)} tokens"
+def format_summary(elapsed: float, usage: Usage) -> Text:
+    """A turn's closing line — time and tokens sent/received, in pastel yellow.
+
+    Uses the same ``↑`` sent / ``↓`` received glyphs as the live spinner.
+    """
+    summary = (
+        f"Done in {format_elapsed(elapsed)} · "
+        f"{SENT_GLYPH} {format_token_count(usage.input_tokens)} "
+        f"{RECEIVED_GLYPH} {format_token_count(usage.output_tokens)} tokens"
+    )
     return Text(summary, style=SUMMARY_STYLE)
 
 
@@ -99,7 +108,7 @@ class StatusReporter:
         self._verb = self._choose(self._verbs)
 
     def update(self, usage: Usage) -> None:
-        """Record the running token usage to display."""
+        """Record the running token usage (sent + received) to display."""
         self._usage = usage
 
     def elapsed(self) -> float:
@@ -112,6 +121,7 @@ class StatusReporter:
         line.append(f"{self._verb}… ", style=VERB_STYLE)
         detail = (
             f"({format_elapsed(self.elapsed())} · "
+            f"{SENT_GLYPH} {format_token_count(self._usage.input_tokens)} "
             f"{RECEIVED_GLYPH} {format_token_count(self._usage.output_tokens)} tokens)"
         )
         line.append(detail, style=DETAIL_STYLE)

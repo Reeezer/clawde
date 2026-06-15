@@ -101,7 +101,7 @@ def _run_turn(
         raise typer.Exit(code=1) from exc
     renderer.finish()
     console.print()  # blank line before the closing summary
-    console.print(format_summary(renderer.elapsed(), turn.usage.total))
+    console.print(format_summary(renderer.elapsed(), turn.usage))
 
 
 def _load_images(paths: Sequence[Path]) -> tuple[ImageContent, ...]:

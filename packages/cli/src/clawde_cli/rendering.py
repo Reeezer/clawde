@@ -214,7 +214,7 @@ class ReplyRenderer:
         self._ensure_live().update(self._renderable(), refresh=True)
 
     def on_usage(self, usage: Usage) -> None:
-        """Update the running token count shown on the spinner."""
+        """Update the running token usage shown on the spinner."""
         self._status.update(usage)
         if self._live is not None and not self._buffer:
             self._live.refresh()

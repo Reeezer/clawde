@@ -44,12 +44,18 @@ def test_format_token_count_thousands_use_one_decimal_k() -> None:
     assert format_token_count(1000) == "1.0k"
 
 
-def test_format_summary_reads_done_with_time_and_tokens() -> None:
-    assert format_summary(516, 46300).plain == "Done in 8m 36s · 46.3k tokens"
+def test_format_summary_reads_done_with_time_and_sent_received_tokens() -> None:
+    summary = format_summary(516, Usage(input_tokens=12000, output_tokens=46300))
+    assert summary.plain == "Done in 8m 36s · ↑ 12.0k ↓ 46.3k tokens"
 
 
-def test_summary_middle_dot_survives_a_windows_codepage() -> None:
-    format_summary(5, 5).plain.encode("cp1252")  # the closing line is persisted
+def test_summary_survives_a_windows_codepage() -> None:
+    # The persisted closing line carries clawde's ↑/↓ chrome; clawde forces UTF-8
+    # output (app._force_utf8, errors="replace"), so encoding it for a legacy
+    # Windows codepage degrades gracefully rather than raising.
+    format_summary(5, Usage(input_tokens=5, output_tokens=5)).plain.encode(
+        "cp1252", errors="replace"
+    )
 
 
 def test_elapsed_is_zero_before_start_then_counts_up() -> None:
@@ -66,15 +72,17 @@ def test_status_line_reads_like_the_design() -> None:
     )
     status.start()
     status.next_verb()
-    status.update(Usage(output_tokens=46300))
+    status.update(Usage(input_tokens=12000, output_tokens=46300))
 
-    assert status.__rich__().plain == f"{SPINNER_GLYPH} Wandering… (8m 36s · ↓ 46.3k tokens)"
+    assert (
+        status.__rich__().plain == f"{SPINNER_GLYPH} Wandering… (8m 36s · ↑ 12.0k ↓ 46.3k tokens)"
+    )
 
 
 def test_status_line_before_start_shows_zero_elapsed() -> None:
     status = StatusReporter(clock=_clock_returning(5.0), choose=lambda verbs: "Pondering")
     # No start() — elapsed must read 0s rather than raising.
-    assert "(0s · ↓ 0 tokens)" in status.__rich__().plain
+    assert "(0s · ↑ 0 ↓ 0 tokens)" in status.__rich__().plain
 
 
 def test_next_verb_draws_from_the_injected_chooser() -> None:

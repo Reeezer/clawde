@@ -149,7 +149,7 @@ def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert "here are the files" in result.stdout  # streamed deltas
     assert "bash" in result.stdout  # tool-call trace
-    assert "7 tokens" in result.stdout  # closing summary
+    assert "↑ 3 ↓ 4 tokens" in result.stdout  # closing summary (sent / received)
 
 
 def test_provider_and_model_flags_reach_the_factory(monkeypatch: pytest.MonkeyPatch) -> None:
