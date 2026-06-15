@@ -10,24 +10,19 @@ backend; the interactive REPL arrives in a later roadmap phase.
 from __future__ import annotations
 
 import mimetypes
-import platform
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
-from clawde_core.config import get_settings
-from clawde_core.loop import Agent, AgentError
 from clawde_core.models import ImageContent, ReasoningEffort
 from clawde_core.providers.base import ProviderError
-from clawde_core.providers.factory import build_provider
 from clawde_core.registry import RegistryError
-from clawde_core.tools.registry import build_tools
 
 from clawde_cli import __version__
-from clawde_cli.rendering import ReplyRenderer, make_console
-from clawde_cli.status import format_summary
+from clawde_cli.rendering import make_console
+from clawde_cli.session import build_session
 
 app = typer.Typer(
     name="clawde",
@@ -88,31 +83,13 @@ def _run_turn(
 ) -> None:
     images = _load_images(image_paths)
     try:
-        model_provider = build_provider(provider, model)
+        session = build_session(console, provider=provider, model=model, effort=effort)
     except (ProviderError, RegistryError) as exc:
         _fail(str(exc))
-    if effort is not None:
-        model_provider.set_reasoning_effort(effort)
-    agent = Agent(model_provider, build_tools(get_settings()), system_prompt=_system_prompt())
-    renderer = ReplyRenderer(console)
-    renderer.begin(model_provider.context_window)
-    try:
-        turn = agent.stream_turn(
-            prompt,
-            on_text=renderer.on_text,
-            on_tool_call=renderer.on_tool_call,
-            on_tool_result=renderer.on_tool_result,
-            on_usage=renderer.on_usage,
-            on_budget=renderer.on_budget,
-            images=images,
-        )
-    except (ProviderError, AgentError) as exc:
-        renderer.finish()  # close any open live region before printing the error
-        console.print(f"\n[red]Error:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
-    renderer.finish()
-    console.print()  # blank line before the closing summary
-    console.print(format_summary(renderer.elapsed(), turn.usage, renderer.context_budget()))
+    # The Session renders the reply and reports failure in its outcome (never
+    # raising); one-shot turns it into a non-zero exit.
+    if not session.run_turn(prompt, images).ok:
+        raise typer.Exit(code=1)
 
 
 def _load_images(paths: Sequence[Path]) -> tuple[ImageContent, ...]:
@@ -153,13 +130,3 @@ def _force_utf8(*streams: object) -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
-
-
-def _system_prompt() -> str:
-    return (
-        "You are clawde, a coding agent working in a terminal on "
-        f"{platform.system()}. You have tools to read, write, and edit files, to "
-        "find files (glob) and search their contents (grep), and to run shell "
-        "commands (bash). Use them to inspect the project and accomplish the "
-        "user's request, then reply with a concise final answer."
-    )

@@ -1,18 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from clawde_core.loop import AgentError, Turn
-from clawde_core.models import (
-    ImageContent,
-    ReasoningEffort,
-    TokenBudget,
-    ToolCall,
-    ToolResult,
-    Usage,
-)
+from clawde_core.models import ImageContent, ReasoningEffort, Usage
 from clawde_core.providers.base import ProviderError
 from clawde_core.registry import RegistryError
 from typer.testing import CliRunner
@@ -20,78 +11,54 @@ from typer.testing import CliRunner
 from clawde_cli import __version__
 from clawde_cli import app as app_module
 from clawde_cli.app import app
+from clawde_cli.session import TurnOutcome, TurnStatus
 
 runner = CliRunner()
 
 
-def _install_provider(
-    monkeypatch: pytest.MonkeyPatch, error: Exception | None = None
-) -> list[dict[str, str | None]]:
-    """Replace the factory with a stub; return a list recording how it was called."""
-    seen: list[dict[str, str | None]] = []
+class _FakeSession:
+    """Stand-in for Session: records the turns it ran and returns a scripted outcome."""
 
-    class _StubProvider:
-        context_window = 1_048_576  # app reads this to seed the spinner's ctx window
+    def __init__(self, outcome: TurnOutcome) -> None:
+        self._outcome = outcome
+        self.turns: list[tuple[str, tuple[ImageContent, ...]]] = []
 
-    def fake_build_provider(provider: str | None = None, model: str | None = None) -> object:
-        seen.append({"provider": provider, "model": model})
+    def run_turn(self, prompt: str, images: tuple[ImageContent, ...] = ()) -> TurnOutcome:
+        self.turns.append((prompt, tuple(images)))
+        return self._outcome
+
+
+def _ok_outcome() -> TurnOutcome:
+    return TurnOutcome(status=TurnStatus.OK, usage=Usage(output_tokens=1))
+
+
+def _install_session(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    outcome: TurnOutcome | None = None,
+    error: Exception | None = None,
+) -> tuple[list[dict[str, object]], _FakeSession]:
+    """Replace build_session with a stub; return (calls-seen, the fake session)."""
+    seen: list[dict[str, object]] = []
+    fake = _FakeSession(outcome if outcome is not None else _ok_outcome())
+
+    def fake_build_session(
+        console: object,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        effort: ReasoningEffort | None = None,
+    ) -> _FakeSession:
+        seen.append({"provider": provider, "model": model, "effort": effort})
         if error is not None:
             raise error
-        return _StubProvider()  # the faked Agent ignores it; app reads context_window
+        return fake
 
-    monkeypatch.setattr(app_module, "build_provider", fake_build_provider)
-    return seen
+    monkeypatch.setattr(app_module, "build_session", fake_build_session)
+    return seen, fake
 
 
-def _fake_agent_class(
-    turn: Turn | None = None,
-    error: Exception | None = None,
-    deltas: tuple[str, ...] = (),
-    tool_calls: tuple[ToolCall, ...] = (),
-    record_images: list[ImageContent] | None = None,
-    budget: TokenBudget | None = None,
-) -> type:
-    class _FakeAgent:
-        def __init__(
-            self,
-            provider: object,
-            tools: object,
-            *,
-            system_prompt: str,
-            max_iterations: int = 25,
-        ) -> None:
-            self.system_prompt = system_prompt
-
-        def stream_turn(
-            self,
-            user_input: str,
-            on_text: Callable[[str], None],
-            on_tool_call: Callable[[ToolCall], None] | None = None,
-            on_tool_result: Callable[[ToolResult], None] | None = None,
-            on_usage: Callable[[Usage], None] | None = None,
-            on_budget: Callable[[TokenBudget], None] | None = None,
-            *,
-            images: tuple[ImageContent, ...] = (),
-        ) -> Turn:
-            if record_images is not None:
-                record_images.extend(images)
-            if error is not None:
-                raise error
-            for delta in deltas:
-                on_text(delta)
-            for call in tool_calls:
-                if on_tool_call is not None:
-                    on_tool_call(call)
-                if on_tool_result is not None:
-                    on_tool_result(ToolResult(tool_call_id=call.id, content="ran ok"))
-            if on_usage is not None:
-                on_usage(Usage(output_tokens=4))
-            if on_budget is not None and budget is not None:
-                on_budget(budget)
-            assert turn is not None
-            return turn
-
-    return _FakeAgent
+# --- flags & no-arg behaviour -------------------------------------------------
 
 
 def test_force_utf8_reconfigures_supporting_streams() -> None:
@@ -122,131 +89,87 @@ def test_no_prompt_shows_a_hint() -> None:
     assert "clawde" in result.stdout.lower()
 
 
+# --- one-shot turn ------------------------------------------------------------
+
+
+def test_runs_a_turn_and_passes_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, fake = _install_session(monkeypatch)
+
+    result = runner.invoke(app, ["list files"])
+
+    assert result.exit_code == 0
+    assert fake.turns == [("list files", ())]
+
+
+def test_provider_model_and_effort_flags_reach_build_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen, _ = _install_session(monkeypatch)
+
+    result = runner.invoke(
+        app, ["--provider", "anthropic", "--model", "claude-x", "--effort", "high", "hi"]
+    )
+
+    assert result.exit_code == 0
+    assert seen == [{"provider": "anthropic", "model": "claude-x", "effort": ReasoningEffort.HIGH}]
+
+
+def test_failed_turn_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_session(
+        monkeypatch,
+        outcome=TurnOutcome(status=TurnStatus.ERROR, usage=Usage(), message="boom"),
+    )
+
+    result = runner.invoke(app, ["do it"])
+
+    assert result.exit_code == 1
+
+
 def test_provider_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_provider(
+    _install_session(
         monkeypatch,
         error=ProviderError(
             "Anthropic API key is missing. Set CLAWDE_PROVIDERS__ANTHROPIC__API_KEY in your .env."
         ),
     )
+
     result = runner.invoke(app, ["do something"])
+
     assert result.exit_code == 1
     assert "api key" in result.stdout.lower()
 
 
 def test_unknown_provider_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_provider(
+    _install_session(
         monkeypatch,
         error=RegistryError("providers: unknown key 'nope'; known: anthropic, gemini, openai"),
     )
+
     result = runner.invoke(app, ["--provider", "nope", "hi"])
+
     assert result.exit_code == 1
     assert "unknown key" in result.stdout.lower()
 
 
-def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_provider(monkeypatch)
-    turn = Turn(
-        final_text="here are the files",
-        messages=(),
-        usage=Usage(input_tokens=3, output_tokens=4),
-    )
-    agent_cls = _fake_agent_class(
-        turn=turn,
-        deltas=("here ", "are the files"),
-        tool_calls=(ToolCall(id="1", name="bash", arguments={"command": "ls"}),),
-    )
-    monkeypatch.setattr(app_module, "Agent", agent_cls)
-
-    result = runner.invoke(app, ["list files"])
-
-    assert result.exit_code == 0
-    assert "here are the files" in result.stdout  # streamed deltas
-    assert "bash" in result.stdout  # tool-call trace
-    assert "↑ 3 ↓ 4 tokens" in result.stdout  # closing summary (sent / received)
-
-
-def test_summary_shows_the_context_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_provider(monkeypatch)
-    turn = Turn(
-        final_text="ok",
-        messages=(),
-        usage=Usage(input_tokens=52000, output_tokens=1200),
-    )
-    agent_cls = _fake_agent_class(
-        turn=turn,
-        deltas=("ok",),
-        budget=TokenBudget(limit=1_048_576, used=35000),
-    )
-    monkeypatch.setattr(app_module, "Agent", agent_cls)
-
-    result = runner.invoke(app, ["list files"])
-
-    assert result.exit_code == 0
-    assert "ctx 35.0k/1M · ↑ 52.0k ↓ 1.2k tokens" in result.stdout  # ctx joins the summary
-
-
-def test_provider_and_model_flags_reach_the_factory(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = _install_provider(monkeypatch)
-    turn = Turn(final_text="ok", messages=(), usage=Usage(output_tokens=1))
-    monkeypatch.setattr(app_module, "Agent", _fake_agent_class(turn=turn, deltas=("ok",)))
-
-    result = runner.invoke(app, ["--provider", "anthropic", "--model", "claude-x", "hi"])
-
-    assert result.exit_code == 0
-    assert seen == [{"provider": "anthropic", "model": "claude-x"}]
-
-
-def test_effort_flag_sets_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorded: list[ReasoningEffort] = []
-
-    class _Recorder:
-        context_window = 1_048_576  # app reads this to seed the spinner's ctx window
-
-        def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
-            recorded.append(effort)
-
-    monkeypatch.setattr(app_module, "build_provider", lambda provider=None, model=None: _Recorder())
-    turn = Turn(final_text="ok", messages=(), usage=Usage(output_tokens=1))
-    monkeypatch.setattr(app_module, "Agent", _fake_agent_class(turn=turn, deltas=("ok",)))
-
-    result = runner.invoke(app, ["--effort", "high", "hi"])
-
-    assert result.exit_code == 0
-    assert recorded == [ReasoningEffort.HIGH]
-
-
-def test_agent_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_provider(monkeypatch)
-    monkeypatch.setattr(app_module, "Agent", _fake_agent_class(error=AgentError("boom")))
-
-    result = runner.invoke(app, ["loop forever"])
-
-    assert result.exit_code == 1
-    assert "boom" in result.stdout
+# --- image loading (validated in the CLI before the turn) ---------------------
 
 
 def test_image_option_attaches_image_to_the_turn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _install_provider(monkeypatch)
+    _, fake = _install_session(monkeypatch)
     image_path = tmp_path / "diagram.png"
     image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
-    seen: list[ImageContent] = []
-    turn = Turn(final_text="a diagram", messages=(), usage=Usage(output_tokens=1))
-    monkeypatch.setattr(
-        app_module,
-        "Agent",
-        _fake_agent_class(turn=turn, deltas=("a diagram",), record_images=seen),
-    )
 
     # options precede the prompt, as documented: `clawde --image X "prompt"`
     result = runner.invoke(app, ["--image", str(image_path), "what is this?"])
 
     assert result.exit_code == 0
-    assert len(seen) == 1
-    assert seen[0].data == b"\x89PNG\r\n\x1a\nfake"
-    assert seen[0].mime_type.startswith("image/")  # registry-independent assertion
+    assert len(fake.turns) == 1
+    _, images = fake.turns[0]
+    assert len(images) == 1
+    assert images[0].data == b"\x89PNG\r\n\x1a\nfake"
+    assert images[0].mime_type.startswith("image/")  # registry-independent assertion
 
 
 def test_missing_image_file_is_reported() -> None:
