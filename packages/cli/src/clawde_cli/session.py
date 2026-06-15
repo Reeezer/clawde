@@ -19,8 +19,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from clawde_core.config import get_settings
+from clawde_core.context.compaction.factory import build_compactor
 from clawde_core.loop import Agent, AgentError
-from clawde_core.models import ImageContent, ReasoningEffort, TokenBudget, Usage
+from clawde_core.models import CompactionEvent, ImageContent, ReasoningEffort, TokenBudget, Usage
 from clawde_core.providers.base import ModelProvider, ProviderError
 from clawde_core.providers.factory import build_provider
 from clawde_core.tools.registry import build_tools
@@ -128,6 +129,11 @@ class Session:
         """Reset the conversation, keeping the session's running totals (``/clear``)."""
         self._agent.clear()
 
+    def compact(self) -> CompactionEvent | None:
+        """Compact the conversation now (the ``/compact`` command); returns what
+        changed, or ``None`` when there was nothing old enough to compact."""
+        return self._agent.compact()
+
     def run_turn(self, prompt: str, images: Sequence[ImageContent] = ()) -> TurnOutcome:
         """Drive one turn: stream the reply, print the summary, return the outcome.
 
@@ -147,6 +153,7 @@ class Session:
                 on_tool_result=renderer.on_tool_result,
                 on_usage=renderer.on_usage,
                 on_budget=renderer.on_budget,
+                on_compaction=renderer.on_compaction,
                 images=tuple(images),
             )
         except KeyboardInterrupt:
@@ -186,7 +193,13 @@ def build_session(
     model_provider = build_provider(provider, model)
     if effort is not None:
         model_provider.set_reasoning_effort(effort)
-    agent = Agent(model_provider, build_tools(settings), system_prompt=default_system_prompt())
+    agent = Agent(
+        model_provider,
+        build_tools(settings),
+        system_prompt=default_system_prompt(),
+        compactor=build_compactor(settings),
+        compaction_threshold=settings.compaction.threshold,
+    )
     return Session(
         console=console,
         provider=model_provider,

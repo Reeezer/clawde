@@ -2,15 +2,16 @@
 
 The loop used to keep ``self._history: list[Message]`` inline and grow it
 unbounded. :class:`History` gives those messages a single, typed home so token
-budgeting and (next) compaction have something concrete to measure and rewrite,
-while the loop stays focused on driving turns.
+budgeting and compaction have something concrete to measure and rewrite, while
+the loop stays focused on driving turns. :meth:`turns` exposes the turn
+boundaries compaction cuts on, so a tool result is never split from its call.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from clawde_core.models import Message
+from clawde_core.models import Message, Role
 
 
 class History:
@@ -32,9 +33,21 @@ class History:
         """An immutable snapshot of the full conversation, oldest first."""
         return tuple(self._messages)
 
-    def since(self, start: int) -> tuple[Message, ...]:
-        """The messages appended at or after index ``start`` (e.g. one turn)."""
-        return tuple(self._messages[start:])
+    def turns(self) -> tuple[tuple[Message, ...], ...]:
+        """The conversation grouped into turns, each starting at a user message.
+
+        A turn is a user message and every assistant / tool message that follows
+        it up to (not including) the next user message — the unit compaction keeps
+        or summarises whole, so a tool result never loses the tool call it answers.
+        Any messages before the first user message form the leading group.
+        """
+        turns: list[list[Message]] = []
+        for message in self._messages:
+            if message.role is Role.USER or not turns:
+                turns.append([message])
+            else:
+                turns[-1].append(message)
+        return tuple(tuple(turn) for turn in turns)
 
     def truncate(self, length: int) -> None:
         """Drop every message from index ``length`` on — e.g. to roll back an

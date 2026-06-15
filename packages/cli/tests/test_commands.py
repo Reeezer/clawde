@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 from collections.abc import Iterator, Sequence
 
+from clawde_core.context.compaction.base import Compactor
+from clawde_core.context.compaction.summarise import SummarisingCompactor
 from clawde_core.loop import Agent
 from clawde_core.models import Completion, Message, ReasoningEffort, StreamChunk, ToolSpec, Usage
 from clawde_core.providers.base import ModelProvider
@@ -13,8 +15,9 @@ from clawde_cli.session import Session
 
 
 class _FakeProvider(ModelProvider):
-    def __init__(self, completions: Sequence[Completion] = ()) -> None:
+    def __init__(self, completions: Sequence[Completion] = (), *, recap: str = "recap") -> None:
         self._queue = list(completions)
+        self._recap = recap
 
     @property
     def model(self) -> str:
@@ -25,7 +28,7 @@ class _FakeProvider(ModelProvider):
         return 1000
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
-        raise NotImplementedError
+        return Completion(text=self._recap)  # the summariser's one direct call
 
     def stream(
         self, messages: Sequence[Message], tools: Sequence[ToolSpec]
@@ -36,10 +39,12 @@ class _FakeProvider(ModelProvider):
         yield StreamChunk(completion=completion)
 
 
-def _session(completions: Sequence[Completion] = ()) -> Session:
+def _session(
+    completions: Sequence[Completion] = (), *, compactor: Compactor | None = None
+) -> Session:
     console = Console(file=io.StringIO(), record=True, width=100)
     provider = _FakeProvider(completions)
-    agent = Agent(provider, [], system_prompt="sys")
+    agent = Agent(provider, [], system_prompt="sys", compactor=compactor)
     return Session(console=console, provider=provider, provider_name="anthropic", agent=agent)
 
 
@@ -139,7 +144,21 @@ def test_effort_rejects_an_unknown_level() -> None:
     assert "Unknown effort" in _text(result)
 
 
-def test_compact_explains_it_is_not_available_yet() -> None:
-    text = _text(dispatch(_session(), "/compact"))
+def test_compact_reports_nothing_to_do_for_a_short_conversation() -> None:
+    text = _text(dispatch(_session(), "/compact"))  # default no-op compactor
 
-    assert "isn't available yet" in text
+    assert "Nothing to compact" in text
+
+
+def test_compact_summarises_and_reports_what_changed() -> None:
+    session = _session(
+        [_completion("a1"), _completion("a2"), _completion("a3")],
+        compactor=SummarisingCompactor(keep_recent_turns=1),
+    )
+    session.run_turn("u1")
+    session.run_turn("u2")
+    session.run_turn("u3")
+
+    text = _text(dispatch(session, "/compact"))
+
+    assert "Compacted" in text  # the recap replaced the older turns

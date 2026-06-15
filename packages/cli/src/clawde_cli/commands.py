@@ -17,6 +17,7 @@ from clawde_core.models import ReasoningEffort
 from rich.console import RenderableType
 from rich.text import Text
 
+from clawde_cli.rendering import format_compaction
 from clawde_cli.session import Session
 from clawde_cli.status import RECEIVED_GLYPH, SENT_GLYPH, format_context, format_token_count
 
@@ -161,15 +162,17 @@ class ClearCommand(SlashCommand):
 @_register
 class CompactCommand(SlashCommand):
     name = "compact"
-    summary = "Summarise and drop old turns (not yet available)."
+    summary = "Summarise older turns to free up the context window."
 
     def run(self, session: Session, argument: str) -> CommandResult:
-        return CommandResult(
-            message=Text(
-                "Compaction isn't available yet — it lands with Phase 4 context management (#23).",
-                style=_WARN_STYLE,
+        event = session.compact()
+        if event is None:
+            return CommandResult(
+                message=Text(
+                    "Nothing to compact yet — the conversation is still short.", style=_NOTE_STYLE
+                )
             )
-        )
+        return CommandResult(message=format_compaction(event))
 
 
 @_register
