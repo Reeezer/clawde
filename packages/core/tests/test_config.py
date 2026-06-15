@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from clawde_core.config import Settings, ToolCalling, get_settings
+from clawde_core.models import ReasoningEffort
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +49,15 @@ def test_tool_calling_defaults_to_native() -> None:
 def test_tool_calling_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLAWDE_TOOL_CALLING", "json")
     assert Settings().tool_calling is ToolCalling.JSON
+
+
+def test_default_reasoning_effort_defaults_to_off() -> None:
+    assert Settings().default_reasoning_effort is ReasoningEffort.OFF
+
+
+def test_default_reasoning_effort_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAWDE_DEFAULT_REASONING_EFFORT", "xhigh")
+    assert Settings().default_reasoning_effort is ReasoningEffort.XHIGH
 
 
 def test_anthropic_and_openai_settings_from_nested_env(monkeypatch: pytest.MonkeyPatch) -> None:

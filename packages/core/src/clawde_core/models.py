@@ -28,12 +28,40 @@ class Role(StrEnum):
     TOOL = "tool"
 
 
+class ReasoningEffort(StrEnum):
+    """How hard the model should think before answering — normalised across backends.
+
+    A single knob clawde maps to each provider's own control (Anthropic's
+    ``output_config.effort`` paired with adaptive thinking, OpenAI's
+    ``reasoning_effort``, Gemini's ``thinking_level``). ``OFF`` means clawde sends
+    no reasoning control and the backend keeps its own default; the rest climb
+    from a quick pass to maximum deliberation. Backends that top out lower clamp
+    to their ceiling (Gemini has no ``xhigh`` / ``max``; OpenAI has no ``max``).
+    """
+
+    OFF = "off"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
 class ToolCall(_Frozen):
-    """A model's request to run a tool with arguments."""
+    """A model's request to run a tool with arguments.
+
+    ``signature`` carries an opaque, provider-issued token bound to this call that
+    some backends require sent back unchanged on the next turn — Gemini 3 signs
+    each function call with a ``thought_signature`` and rejects a follow-up that
+    drops it. The loop never inspects it; it rides along on the assistant turn so
+    the replayed request stays valid, mirroring :class:`ThinkingBlock`. Backends
+    that don't sign tool calls (Anthropic, OpenAI) leave it ``None``.
+    """
 
     id: str
     name: str
     arguments: dict[str, object] = Field(default_factory=dict)
+    signature: bytes | None = None
 
 
 class ToolResult(_Frozen):
@@ -75,19 +103,36 @@ class ImageContent(_Frozen):
     data: bytes
 
 
+class ThinkingBlock(_Frozen):
+    """A block of the model's reasoning, preserved verbatim so it can be replayed.
+
+    With extended thinking *and* tool use, a backend may require the reasoning
+    that preceded a tool call to be sent back unchanged on the next turn or it
+    rejects the request (Anthropic signs each block; a *redacted* block — Claude's
+    reasoning was flagged — carries only opaque ``redacted_data`` and no text).
+    The loop never inspects these; it carries them on the assistant turn that
+    produced them so the next request stays valid.
+    """
+
+    text: str = ""
+    signature: str | None = None
+    redacted_data: str | None = None
+
+
 class Message(_Frozen):
     """One entry in the conversation.
 
     A single shape covers every role; which fields are populated depends on
     ``role`` (user turns may carry ``images``; assistant turns carry
-    ``tool_calls``; tool results carry ``tool_call_id`` and ``name``). The
-    constructors below make intent explicit.
+    ``tool_calls`` and any ``thinking`` blocks; tool results carry
+    ``tool_call_id`` and ``name``). The constructors below make intent explicit.
     """
 
     role: Role
     content: str = ""
     images: tuple[ImageContent, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
+    thinking: tuple[ThinkingBlock, ...] = ()
     tool_call_id: str | None = None
     name: str | None = None
 
@@ -100,8 +145,13 @@ class Message(_Frozen):
         return cls(role=Role.USER, content=content, images=images)
 
     @classmethod
-    def assistant(cls, content: str = "", tool_calls: tuple[ToolCall, ...] = ()) -> Message:
-        return cls(role=Role.ASSISTANT, content=content, tool_calls=tool_calls)
+    def assistant(
+        cls,
+        content: str = "",
+        tool_calls: tuple[ToolCall, ...] = (),
+        thinking: tuple[ThinkingBlock, ...] = (),
+    ) -> Message:
+        return cls(role=Role.ASSISTANT, content=content, tool_calls=tool_calls, thinking=thinking)
 
     @classmethod
     def tool(cls, tool_call_id: str, content: str, name: str) -> Message:
@@ -109,10 +159,16 @@ class Message(_Frozen):
 
 
 class Completion(_Frozen):
-    """What a provider returns from one call: text and/or tool calls, plus usage."""
+    """What a provider returns from one call: text and/or tool calls, plus usage.
+
+    ``thinking`` carries any reasoning blocks the backend returned (extended
+    thinking); the loop preserves them on the assistant turn so a follow-up
+    request with tool results stays valid.
+    """
 
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
+    thinking: tuple[ThinkingBlock, ...] = ()
     usage: Usage = Field(default_factory=Usage)
 
 

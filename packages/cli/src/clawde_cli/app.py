@@ -19,7 +19,7 @@ from typing import Annotated, NoReturn
 import typer
 from clawde_core.config import get_settings
 from clawde_core.loop import Agent, AgentError
-from clawde_core.models import ImageContent
+from clawde_core.models import ImageContent, ReasoningEffort
 from clawde_core.providers.base import ProviderError
 from clawde_core.providers.factory import build_provider
 from clawde_core.registry import RegistryError
@@ -52,6 +52,10 @@ def main(
     model: Annotated[
         str | None, typer.Option(help="Model id to use (default: the provider's own default).")
     ] = None,
+    effort: Annotated[
+        ReasoningEffort | None,
+        typer.Option("--effort", help="Reasoning effort: off, low, medium, high, xhigh, max."),
+    ] = None,
     image: Annotated[
         list[Path] | None,
         typer.Option("--image", help="Attach an image file to the prompt (repeatable)."),
@@ -72,17 +76,23 @@ def main(
             "The interactive REPL is on the roadmap."
         )
         return
-    _run_turn(prompt, provider, model, image or [])
+    _run_turn(prompt, provider, model, image or [], effort)
 
 
 def _run_turn(
-    prompt: str, provider: str | None, model: str | None, image_paths: Sequence[Path]
+    prompt: str,
+    provider: str | None,
+    model: str | None,
+    image_paths: Sequence[Path],
+    effort: ReasoningEffort | None = None,
 ) -> None:
     images = _load_images(image_paths)
     try:
         model_provider = build_provider(provider, model)
     except (ProviderError, RegistryError) as exc:
         _fail(str(exc))
+    if effort is not None:
+        model_provider.set_reasoning_effort(effort)
     agent = Agent(model_provider, build_tools(get_settings()), system_prompt=_system_prompt())
     renderer = ReplyRenderer(console)
     renderer.begin()

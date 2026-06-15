@@ -11,9 +11,9 @@ is what the loop is written against and will not change.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 
-from clawde_core.models import Completion, Message, StreamChunk, ToolSpec
+from clawde_core.models import Completion, Message, ReasoningEffort, StreamChunk, ToolSpec
 
 
 class ProviderError(RuntimeError):
@@ -28,7 +28,42 @@ class ModelProvider(ABC):
     format; one that does not must call :meth:`_reject_image_input` before
     translating a conversation, so an attached image raises a clear
     :class:`ProviderError` instead of vanishing.
+
+    Reasoning effort: :meth:`set_reasoning_effort` is the runtime toggle the
+    factory seeds from ``Settings`` and the CLI's ``--effort`` (later ``/effort``)
+    drives. Support is per *model*, not per provider, so each impl resolves the
+    effort against a per-model mapping via :meth:`_resolve_effort`: an
+    unsupported level raises rather than being silently clamped, and ``OFF`` is
+    always honoured by sending no reasoning field.
     """
+
+    _reasoning_effort: ReasoningEffort = ReasoningEffort.OFF
+
+    @property
+    def reasoning_effort(self) -> ReasoningEffort:
+        """The reasoning effort applied to subsequent calls (default ``OFF``)."""
+        return self._reasoning_effort
+
+    def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
+        """Set the reasoning effort for subsequent calls — the runtime toggle."""
+        self._reasoning_effort = effort
+
+    def _resolve_effort(
+        self, supported: Mapping[ReasoningEffort, str], *, model: str
+    ) -> str | None:
+        """Translate the current effort to ``model``'s wire value, or ``None`` for OFF.
+
+        ``supported`` maps each effort ``model`` honours to its backend value. A
+        non-OFF effort outside it raises :class:`ProviderError` — clawde never
+        clamps a level a model can't honour, it reports the mismatch up front.
+        """
+        effort = self._reasoning_effort
+        if effort is ReasoningEffort.OFF:
+            return None
+        wire = supported.get(effort)
+        if wire is None:
+            raise ProviderError(_unsupported_effort(model, effort, supported))
+        return wire
 
     @abstractmethod
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
@@ -59,3 +94,16 @@ class ModelProvider(ABC):
         """
         if any(message.images for message in messages):
             raise ProviderError(f"{type(self).__name__} does not support image input.")
+
+
+def _unsupported_effort(
+    model: str, effort: ReasoningEffort, supported: Mapping[ReasoningEffort, str]
+) -> str:
+    """Compose the error for a reasoning effort ``model`` can't honour."""
+    if not supported:
+        return f"Model {model!r} does not support reasoning effort; use effort 'off' (the default)."
+    levels = ", ".join(level.value for level in ReasoningEffort if level in supported)
+    return (
+        f"Model {model!r} does not support reasoning effort {effort.value!r}; "
+        f"it supports: off, {levels}."
+    )

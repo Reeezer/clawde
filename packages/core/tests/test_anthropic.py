@@ -8,7 +8,15 @@ from typing import Any
 import pytest
 
 from clawde_core.config import AnthropicSettings, ProvidersSettings, Settings
-from clawde_core.models import ImageContent, Message, ToolCall, ToolSpec, Usage
+from clawde_core.models import (
+    ImageContent,
+    Message,
+    ReasoningEffort,
+    ThinkingBlock,
+    ToolCall,
+    ToolSpec,
+    Usage,
+)
 from clawde_core.providers import PROVIDERS
 from clawde_core.providers import anthropic as anthropic_module
 from clawde_core.providers.anthropic import DEFAULT_MODEL, AnthropicProvider
@@ -265,6 +273,79 @@ def test_registered_builder_falls_back_to_default_model(monkeypatch: pytest.Monk
 
     assert isinstance(provider, AnthropicProvider)
     assert provider._model == DEFAULT_MODEL
+
+
+# --- reasoning effort + thinking blocks ---------------------------------------
+
+
+def test_off_effort_sends_no_reasoning_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _install(monkeypatch, response=_message(text="ok"))
+    provider = AnthropicProvider(api_key="key")  # OFF by default
+
+    provider.complete([Message.user("hi")], [])
+
+    sent = client.messages.calls[0]
+    assert "thinking" not in sent
+    assert "output_config" not in sent
+
+
+def test_effort_adds_adaptive_thinking_and_native_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _install(monkeypatch, response=_message(text="ok"))
+    provider = AnthropicProvider(api_key="key")
+    provider.set_reasoning_effort(ReasoningEffort.MAX)  # Anthropic maps every level 1:1
+
+    provider.complete([Message.user("hi")], [])
+
+    sent = client.messages.calls[0]
+    assert sent["thinking"] == {"type": "adaptive"}
+    assert sent["output_config"] == {"effort": "max"}
+
+
+def test_effort_on_a_model_without_support_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, response=_message(text="ok"))
+    provider = AnthropicProvider(api_key="key", model="claude-3-5-haiku-latest")
+    provider.set_reasoning_effort(ReasoningEffort.HIGH)  # older Claude has no effort control
+
+    with pytest.raises(ProviderError, match="does not support reasoning effort"):
+        provider.complete([Message.user("hi")], [])
+
+
+def test_complete_captures_thinking_and_redacted_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="thinking", thinking="step by step", signature="sig-abc"),
+            SimpleNamespace(type="redacted_thinking", data="opaque"),
+            SimpleNamespace(type="text", text="the answer"),
+        ],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0),
+    )
+    _install(monkeypatch, response=response)
+    provider = AnthropicProvider(api_key="key")
+
+    completion = provider.complete([Message.user("hi")], [])
+
+    assert completion.text == "the answer"
+    assert completion.thinking == (
+        ThinkingBlock(text="step by step", signature="sig-abc"),
+        ThinkingBlock(redacted_data="opaque"),
+    )
+
+
+def test_to_messages_replays_thinking_blocks_first() -> None:
+    call = ToolCall(id="c1", name="bash", arguments={"command": "ls"})
+    thinking = (
+        ThinkingBlock(text="reason", signature="sig-1"),
+        ThinkingBlock(redacted_data="opaque"),
+    )
+    message = Message.assistant(content="here", tool_calls=(call,), thinking=thinking)
+
+    blocks = anthropic_module._to_messages([message])[0]["content"]
+
+    # thinking (and redacted) blocks must lead, before text and tool_use
+    assert blocks[0] == {"type": "thinking", "thinking": "reason", "signature": "sig-1"}
+    assert blocks[1] == {"type": "redacted_thinking", "data": "opaque"}
+    assert blocks[2] == {"type": "text", "text": "here"}
+    assert blocks[3]["type"] == "tool_use"
 
 
 @pytest.mark.integration

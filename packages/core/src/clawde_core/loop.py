@@ -111,7 +111,11 @@ class Agent:
             if on_usage is not None:
                 on_usage(usage)
             self._history.append(
-                Message.assistant(content=completion.text, tool_calls=completion.tool_calls)
+                Message.assistant(
+                    content=completion.text,
+                    tool_calls=completion.tool_calls,
+                    thinking=completion.thinking,
+                )
             )
             if not completion.tool_calls:
                 return Turn(
