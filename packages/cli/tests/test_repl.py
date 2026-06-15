@@ -96,7 +96,9 @@ def test_a_plain_line_runs_a_turn() -> None:
     run_repl(_session(provider, console), console, _scripted_reader("say hi"))
 
     assert len(provider.received) == 1  # the prompt drove one turn
-    assert "hi there" in console.export_text()
+    out = console.export_text()
+    assert "hi there" in out
+    assert "ready" in out  # the done signal fired after the turn (#13)
 
 
 def test_blank_lines_are_ignored() -> None:

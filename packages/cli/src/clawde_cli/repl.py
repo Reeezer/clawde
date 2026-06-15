@@ -22,6 +22,7 @@ from rich.text import Text
 from clawde_cli.commands import dispatch
 from clawde_cli.gitinfo import current_git_context
 from clawde_cli.header import build_header_state, render_header
+from clawde_cli.notify import bell_enabled, signal_done
 from clawde_cli.session import Session
 
 PROMPT = "› "
@@ -40,6 +41,7 @@ def run_repl(session: Session, console: Console, read_line: LineReader) -> None:
     """
     console.print(render_header(build_header_state(session, current_git_context())))
     console.print(_hint())
+    bell = bell_enabled()
     while True:
         try:
             line = read_line().strip()
@@ -57,7 +59,7 @@ def run_repl(session: Session, console: Console, read_line: LineReader) -> None:
             if result.exit_session:
                 break
             continue
-        session.run_turn(line)
+        signal_done(console, session.run_turn(line), bell=bell)
 
 
 def interactive_line_reader(
