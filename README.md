@@ -5,10 +5,15 @@ learning-grade recreation of an agentic CLI (in the spirit of Claude Code). The
 agent loop is hand-written (no agent framework); point it at Anthropic, OpenAI,
 Gemini, a local Ollama model, or any OpenAI-compatible endpoint.
 
-> **Status:** Phase 0 — foundations. The repo, tooling, and engine/CLI skeletons
-> are in place (a `clawde` command and the `Registry[T]` backbone, green under a
-> 100% coverage gate). The agent loop and providers are next — see
-> **[docs/ROADMAP.md](docs/ROADMAP.md)**.
+> **Status:** Phase 4 — context management (in progress). Phases 0–3 are done: the
+> hand-written agent loop, the BYOM providers (Anthropic, OpenAI, Gemini, Ollama, or
+> any OpenAI-compatible endpoint) with streaming, multimodal input and reasoning
+> effort, and the tool suite (`read`, `write`, `edit`, `bash`, `glob`, `grep`) all
+> work today — drive them with `clawde "<prompt>"` and watch a live token/context
+> status line. Phase 4 has landed the history store, per-provider token budgeting
+> ([ADR-0004](docs/adr/0004-provider-token-counting.md)), and conversation compaction
+> ([ADR-0005](docs/adr/0005-conversation-compaction.md)); the interactive REPL is
+> Phase 6. See **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ## Why
 
