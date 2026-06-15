@@ -4,8 +4,10 @@ from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
 
+from clawde_core.context.compaction.summarise import SummarisingCompactor
 from clawde_core.loop import Agent, AgentError
 from clawde_core.models import (
+    CompactionEvent,
     Completion,
     ImageContent,
     Message,
@@ -27,13 +29,22 @@ class FakeProvider(ModelProvider):
     Has no ``stream()`` override, so streaming tests exercise the base default.
     """
 
-    def __init__(self, completions: Sequence[Completion]) -> None:
+    def __init__(
+        self, completions: Sequence[Completion], *, context_window: int | None = None
+    ) -> None:
         self._queue = list(completions)
         self.received: list[tuple[Message, ...]] = []
+        self._context_window = context_window
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self.received.append(tuple(messages))
         return self._queue.pop(0)
+
+    @property
+    def context_window(self) -> int:
+        if self._context_window is None:
+            return DEFAULT_CONTEXT_WINDOW
+        return self._context_window
 
 
 class FakeStreamingProvider(ModelProvider):
@@ -303,3 +314,40 @@ def test_stream_turn_reports_budget_from_reported_usage() -> None:
 
     assert [b.used for b in budgets] == [110, 125]  # input + output reported per model call
     assert all(b.limit == DEFAULT_CONTEXT_WINDOW for b in budgets)
+
+
+def test_compacts_across_turns_when_the_estimate_crosses_the_threshold() -> None:
+    first = Completion(text="first answer", usage=Usage(input_tokens=90, output_tokens=5))
+    summary = Completion(text="THE SUMMARY")
+    second = Completion(text="second answer", usage=Usage(input_tokens=8, output_tokens=2))
+    provider = FakeProvider([first, summary, second], context_window=100)
+    agent = Agent(
+        provider,
+        [],
+        system_prompt="s",
+        compactor=SummarisingCompactor(keep_recent_turns=1),
+        compaction_threshold=0.8,
+    )
+    events: list[CompactionEvent] = []
+
+    agent.run_turn("first")  # the reported estimate climbs to 95/100 = 0.95
+    agent.stream_turn("second", on_text=lambda _delta: None, on_compaction=events.append)
+
+    assert len(events) == 1  # one compaction, at the start of the second turn
+    assert events[0].tokens_before == 95
+    final_call = " ".join(message.content for message in provider.received[-1])
+    assert "THE SUMMARY" in final_call  # the recap replaced the old turn
+    assert "first answer" not in final_call
+
+
+def test_default_agent_never_compacts_even_when_over_the_window() -> None:
+    first = Completion(text="a", usage=Usage(input_tokens=200, output_tokens=0))
+    provider = FakeProvider([first, Completion(text="b")], context_window=100)  # 200/100 = 2.0
+    agent = Agent(provider, [], system_prompt="s")  # defaults: no-op compactor, threshold 1.0
+    events: list[CompactionEvent] = []
+
+    agent.run_turn("one")
+    agent.stream_turn("two", on_text=lambda _delta: None, on_compaction=events.append)
+
+    assert events == []  # the no-op compactor changes nothing
+    assert len(provider.received) == 2  # and never makes a summarisation call

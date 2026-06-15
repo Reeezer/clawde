@@ -28,6 +28,17 @@ class ToolCalling(StrEnum):
     JSON = "json"
 
 
+class CompactionStrategy(StrEnum):
+    """How clawde shrinks a conversation that nears the context window (ADR-0005).
+
+    ``summarise`` replaces old turns with a model-written recap; ``off`` disables
+    compaction so the loop never makes a mid-turn summarisation call.
+    """
+
+    OFF = "off"
+    SUMMARISE = "summarise"
+
+
 class GeminiSettings(BaseModel):
     """Configuration for the Gemini provider (``CLAWDE_PROVIDERS__GEMINI__*``)."""
 
@@ -60,6 +71,19 @@ class ProvidersSettings(BaseModel):
     openai: OpenAICompatibleSettings = Field(default_factory=OpenAICompatibleSettings)
 
 
+class CompactionSettings(BaseModel):
+    """Conversation compaction (``CLAWDE_COMPACTION__*``, ADR-0005).
+
+    ``threshold`` is the share of the context window (0–1) at which the loop
+    compacts before its next call; ``keep_recent_turns`` is how many recent turns
+    the ``summarise`` strategy preserves verbatim.
+    """
+
+    strategy: CompactionStrategy = CompactionStrategy.SUMMARISE
+    threshold: float = 0.8
+    keep_recent_turns: int = 3
+
+
 class Settings(BaseSettings):
     """Top-level clawde settings."""
 
@@ -75,6 +99,7 @@ class Settings(BaseSettings):
     tool_calling: ToolCalling = ToolCalling.NATIVE
     default_reasoning_effort: ReasoningEffort = ReasoningEffort.OFF
     providers: ProvidersSettings = Field(default_factory=ProvidersSettings)
+    compaction: CompactionSettings = Field(default_factory=CompactionSettings)
 
 
 @lru_cache(maxsize=1)

@@ -4,7 +4,7 @@ A learning-grade, bring-your-own-model coding agent, built one brick at a time.
 Ordering is by dependency: each phase needs only the ones above it, so the system
 is always runnable. Every phase ships green under the 100% coverage gate.
 
-Legend: ✅ done · 🔜 next · ⏳ later
+Legend: ✅ done · 🚧 in progress · 🔜 next · ⏳ later
 
 ---
 
@@ -49,10 +49,13 @@ Make the model swappable — the heart of BYOM. → ADR-0003.
   deferred to a follow-up (it can silently corrupt files). → #4
 - **Done when:** the agent can read, search, and safely edit files end-to-end.
 
-## Phase 4 — Context management 🔜
+## Phase 4 — Context management 🚧
 
-- History store + per-provider token budgeting.
-- **Compaction** (summarise old turns; keep recent + pinned).
+- History store + per-provider token budgeting — **done.** → ADR-0004, #22
+- **Compaction** (summarise old turns; keep recent) — **done.** A `Compactor` ABC +
+  `COMPACTORS` registry picks the strategy from settings; the summariser keeps recent
+  turns and replaces older ones with a model-written recap when the running estimate
+  crosses a threshold (at most once per turn). → ADR-0005, #23
 - System-prompt assembly; file-state tracking (don't re-read unchanged files).
 - **Done when:** a long session stays under the window without losing the thread.
 
