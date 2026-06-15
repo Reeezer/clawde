@@ -20,7 +20,7 @@ import json
 import re
 from collections.abc import Sequence
 
-from clawde_core.models import Completion, Message, Role, ToolCall, ToolSpec
+from clawde_core.models import Completion, Message, ReasoningEffort, Role, ToolCall, ToolSpec
 from clawde_core.providers.base import ModelProvider
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
@@ -37,6 +37,14 @@ class JsonToolCallingProvider(ModelProvider):
 
     def __init__(self, inner: ModelProvider) -> None:
         self._inner = inner
+
+    @property
+    def reasoning_effort(self) -> ReasoningEffort:
+        return self._inner.reasoning_effort
+
+    def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
+        # The inner provider builds the request, so the effort must reach it.
+        self._inner.set_reasoning_effort(effort)
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         completion = self._inner.complete(_shape(messages, tools), [])

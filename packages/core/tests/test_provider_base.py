@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import pytest
 
-from clawde_core.models import Completion, ImageContent, Message, ToolSpec
+from clawde_core.models import Completion, ImageContent, Message, ReasoningEffort, ToolSpec
 from clawde_core.providers.base import ModelProvider, ProviderError
 
 
@@ -30,3 +30,43 @@ def test_guard_is_a_no_op_without_images() -> None:
     completion = provider.complete([Message.user("hi")], [])
 
     assert completion.text == "ok"
+
+
+def test_reasoning_effort_defaults_off_and_is_settable() -> None:
+    provider = _TextOnlyProvider()
+
+    assert provider.reasoning_effort is ReasoningEffort.OFF
+    provider.set_reasoning_effort(ReasoningEffort.XHIGH)
+    updated: ReasoningEffort = provider.reasoning_effort
+    assert updated is ReasoningEffort.XHIGH
+
+
+def test_resolve_effort_returns_none_when_off() -> None:
+    provider = _TextOnlyProvider()  # OFF by default
+
+    assert provider._resolve_effort({ReasoningEffort.HIGH: "high"}, model="m") is None
+
+
+def test_resolve_effort_maps_a_supported_level() -> None:
+    provider = _TextOnlyProvider()
+    provider.set_reasoning_effort(ReasoningEffort.HIGH)
+
+    assert provider._resolve_effort({ReasoningEffort.HIGH: "high"}, model="m") == "high"
+
+
+def test_resolve_effort_rejects_an_unsupported_level() -> None:
+    provider = _TextOnlyProvider()
+    provider.set_reasoning_effort(ReasoningEffort.MAX)
+
+    with pytest.raises(ProviderError, match="it supports: off, low, high"):
+        provider._resolve_effort(
+            {ReasoningEffort.LOW: "low", ReasoningEffort.HIGH: "high"}, model="gemini-3-pro"
+        )
+
+
+def test_resolve_effort_reports_no_support_for_an_empty_map() -> None:
+    provider = _TextOnlyProvider()
+    provider.set_reasoning_effort(ReasoningEffort.LOW)
+
+    with pytest.raises(ProviderError, match="does not support reasoning effort; use effort 'off'"):
+        provider._resolve_effort({}, model="gpt-4o-mini")

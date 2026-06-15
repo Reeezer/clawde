@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from clawde_core.loop import AgentError, Turn
-from clawde_core.models import ImageContent, ToolCall, ToolResult, Usage
+from clawde_core.models import ImageContent, ReasoningEffort, ToolCall, ToolResult, Usage
 from clawde_core.providers.base import ProviderError
 from clawde_core.registry import RegistryError
 from typer.testing import CliRunner
@@ -161,6 +161,23 @@ def test_provider_and_model_flags_reach_the_factory(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 0
     assert seen == [{"provider": "anthropic", "model": "claude-x"}]
+
+
+def test_effort_flag_sets_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: list[ReasoningEffort] = []
+
+    class _Recorder:
+        def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
+            recorded.append(effort)
+
+    monkeypatch.setattr(app_module, "build_provider", lambda provider=None, model=None: _Recorder())
+    turn = Turn(final_text="ok", messages=(), usage=Usage(output_tokens=1))
+    monkeypatch.setattr(app_module, "Agent", _fake_agent_class(turn=turn, deltas=("ok",)))
+
+    result = runner.invoke(app, ["--effort", "high", "hi"])
+
+    assert result.exit_code == 0
+    assert recorded == [ReasoningEffort.HIGH]
 
 
 def test_agent_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:

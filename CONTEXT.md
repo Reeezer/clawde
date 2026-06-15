@@ -23,6 +23,15 @@ CONTEXT.md in spirit: name the domain once, then use it everywhere.)
   `assistant` / `tool`) plus content. Providers normalise their wire format
   to/from these.
 - **Usage** — token counts (input / output / cached) a provider reports per call.
+- **Reasoning effort** — how hard the model thinks before answering, normalised
+  across backends as `off` (default) / `low` / `medium` / `high` / `xhigh` / `max`.
+  Toggled per session (`set_reasoning_effort`); each provider maps it to its own
+  control (Anthropic `output_config.effort` + adaptive thinking, OpenAI
+  `reasoning_effort`, Gemini-3 `thinking_level`). Support is per *model*: a level
+  the chosen model can't honour is rejected, never clamped.
+- **Thinking block** — a unit of the model's reasoning, preserved verbatim on the
+  assistant turn and replayed unchanged on the next request so interleaved tool
+  use stays valid under extended thinking.
 
 ## Tools
 

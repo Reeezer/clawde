@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from clawde_core.config import OpenAICompatibleSettings, ProvidersSettings, Settings
-from clawde_core.models import ImageContent, Message, ToolCall, ToolSpec, Usage
+from clawde_core.models import ImageContent, Message, ReasoningEffort, ToolCall, ToolSpec, Usage
 from clawde_core.providers import PROVIDERS
 from clawde_core.providers import openai_compatible as openai_module
 from clawde_core.providers.base import ProviderError
@@ -254,6 +254,46 @@ def test_stream_assembles_tool_calls_from_fragments(monkeypatch: pytest.MonkeyPa
     assert [c.name for c in final.tool_calls] == ["bash"]
     assert final.tool_calls[0].id == "tc1"
     assert final.tool_calls[0].arguments == {"command": "ls"}
+
+
+# --- reasoning effort ---------------------------------------------------------
+
+
+def test_off_effort_sends_no_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _install(monkeypatch, response=_response(content="hi"))
+    provider = OpenAICompatibleProvider(api_key="key")  # OFF by default
+
+    provider.complete([Message.user("hi")], [])
+
+    assert "reasoning_effort" not in client.completions.calls[0]
+
+
+def test_effort_sets_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _install(monkeypatch, response=_response(content="hi"))
+    provider = OpenAICompatibleProvider(api_key="key", model="o3")  # a reasoning model
+    provider.set_reasoning_effort(ReasoningEffort.LOW)
+
+    provider.complete([Message.user("hi")], [])
+
+    assert client.completions.calls[0]["reasoning_effort"] == "low"
+
+
+def test_level_above_high_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, response=_response(content="hi"))
+    provider = OpenAICompatibleProvider(api_key="key", model="o3")
+    provider.set_reasoning_effort(ReasoningEffort.MAX)  # OpenAI has no xhigh / max
+
+    with pytest.raises(ProviderError, match="does not support reasoning effort 'max'"):
+        provider.complete([Message.user("hi")], [])
+
+
+def test_effort_on_a_non_reasoning_model_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, response=_response(content="hi"))
+    provider = OpenAICompatibleProvider(api_key="key")  # default gpt-4o-mini is non-reasoning
+    provider.set_reasoning_effort(ReasoningEffort.LOW)
+
+    with pytest.raises(ProviderError, match="does not support reasoning effort"):
+        provider.complete([Message.user("hi")], [])
 
 
 # --- registry builder ---------------------------------------------------------

@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
-from clawde_core.models import Completion, ImageContent, Message, Role, ToolCall, ToolSpec, Usage
+from clawde_core.models import (
+    Completion,
+    ImageContent,
+    Message,
+    ReasoningEffort,
+    Role,
+    ToolCall,
+    ToolSpec,
+    Usage,
+)
 from clawde_core.providers import json_tools
 from clawde_core.providers.base import ModelProvider
 from clawde_core.providers.json_tools import JsonToolCallingProvider
@@ -97,6 +106,18 @@ def test_stream_uses_the_base_default_and_still_parses_calls() -> None:
     final = chunks[-1].completion
     assert final is not None
     assert [c.name for c in final.tool_calls] == ["bash"]
+
+
+def test_reasoning_effort_delegates_to_the_inner_provider() -> None:
+    inner = _Inner(Completion(text="ok"))
+    wrapper = JsonToolCallingProvider(inner)
+
+    assert wrapper.reasoning_effort is ReasoningEffort.OFF
+    wrapper.set_reasoning_effort(ReasoningEffort.HIGH)
+
+    assert inner.reasoning_effort is ReasoningEffort.HIGH  # the inner provider builds the request
+    mirrored: ReasoningEffort = wrapper.reasoning_effort
+    assert mirrored is ReasoningEffort.HIGH  # and the wrapper mirrors it
 
 
 # --- _shape(): flattening tool calls / results / images ----------------------

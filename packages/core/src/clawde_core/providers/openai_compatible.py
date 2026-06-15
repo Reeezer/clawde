@@ -16,7 +16,16 @@ from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from clawde_core.config import get_settings
-from clawde_core.models import Completion, Message, Role, StreamChunk, ToolCall, ToolSpec, Usage
+from clawde_core.models import (
+    Completion,
+    Message,
+    ReasoningEffort,
+    Role,
+    StreamChunk,
+    ToolCall,
+    ToolSpec,
+    Usage,
+)
 from clawde_core.providers import PROVIDERS
 from clawde_core.providers.base import ModelProvider, ProviderError
 
@@ -26,6 +35,27 @@ if TYPE_CHECKING:
     from openai.types.completion_usage import CompletionUsage
 
 DEFAULT_MODEL = "gpt-4o-mini"
+
+# clawde's normalised effort → OpenAI's ``reasoning_effort``. OpenAI's reasoning
+# models accept low / medium / high only — no xhigh or max — so those higher
+# levels are reported unsupported rather than clamped down.
+_REASONING_EFFORTS: dict[ReasoningEffort, str] = {
+    ReasoningEffort.LOW: "low",
+    ReasoningEffort.MEDIUM: "medium",
+    ReasoningEffort.HIGH: "high",
+}
+
+# reasoning_effort is a reasoning-model feature; the gpt-3 / gpt-4 (incl. 4o)
+# families don't accept it. They're denied here while every other model —
+# o-series, gpt-5, and local reasoning models on a custom base_url — is allowed,
+# so BYOM endpoints keep working and the backend stays the final authority.
+_NON_REASONING_PREFIXES = ("gpt-3", "gpt-4", "chatgpt")
+
+
+def _effort_map(model: str) -> dict[ReasoningEffort, str]:
+    """The effort→native mapping for ``model`` (empty for non-reasoning families)."""
+    return {} if model.startswith(_NON_REASONING_PREFIXES) else dict(_REASONING_EFFORTS)
+
 
 # untyped: the openai SDK's create() takes TypedDict params; clawde builds the
 # equivalent wire dicts and lets the SDK validate them at the boundary.
@@ -87,6 +117,9 @@ class OpenAICompatibleProvider(ModelProvider):
         rendered = _to_tools(tools)
         if rendered:
             request["tools"] = rendered
+        effort = self._resolve_effort(_effort_map(self._model), model=self._model)
+        if effort is not None:
+            request["reasoning_effort"] = effort
         return request
 
     def _client(self) -> OpenAI:
