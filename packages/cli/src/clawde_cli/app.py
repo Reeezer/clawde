@@ -1,10 +1,10 @@
 """The ``clawde`` command-line entry point.
 
 ``clawde "<prompt>"`` runs a single agent turn against the configured provider,
-streaming the reply as it arrives. ``--provider`` / ``--model`` override the
-choice for one run and ``--version`` prints the version. The provider is built
-by the factory from settings (ADR-0003), so the CLI never names a concrete
-backend; the interactive REPL arrives in a later roadmap phase.
+streaming the reply as it arrives; ``clawde`` with no prompt drops into an
+interactive REPL instead (#10). ``--provider`` / ``--model`` override the choice
+for one run and ``--version`` prints the version. The provider is built by the
+factory from settings (ADR-0003), so the CLI never names a concrete backend.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from clawde_core.registry import RegistryError
 
 from clawde_cli import __version__
 from clawde_cli.rendering import make_console
+from clawde_cli.repl import interactive_line_reader, run_repl
 from clawde_cli.session import build_session
 
 app = typer.Typer(
@@ -65,11 +66,7 @@ def main(
         console.print(f"clawde {__version__}")
         return
     if prompt is None:
-        console.print(
-            "[bold]clawde[/bold] — give me a task, e.g. "
-            '[cyan]clawde "list the python files"[/cyan].\n'
-            "The interactive REPL is on the roadmap."
-        )
+        _run_repl(provider, model, effort)
         return
     _run_turn(prompt, provider, model, image or [], effort)
 
@@ -90,6 +87,14 @@ def _run_turn(
     # raising); one-shot turns it into a non-zero exit.
     if not session.run_turn(prompt, images).ok:
         raise typer.Exit(code=1)
+
+
+def _run_repl(provider: str | None, model: str | None, effort: ReasoningEffort | None) -> None:
+    try:
+        session = build_session(console, provider=provider, model=model, effort=effort)
+    except (ProviderError, RegistryError) as exc:
+        _fail(str(exc))
+    run_repl(session, console, interactive_line_reader())
 
 
 def _load_images(paths: Sequence[Path]) -> tuple[ImageContent, ...]:

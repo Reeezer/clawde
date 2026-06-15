@@ -83,10 +83,27 @@ def test_version_flag_prints_the_version() -> None:
     assert __version__ in result.stdout
 
 
-def test_no_prompt_shows_a_hint() -> None:
+def test_no_prompt_starts_the_repl(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, fake = _install_session(monkeypatch)
+    started: list[object] = []
+    monkeypatch.setattr(app_module, "interactive_line_reader", lambda: lambda: "")
+    monkeypatch.setattr(
+        app_module, "run_repl", lambda session, console, read_line: started.append(session)
+    )
+
     result = runner.invoke(app, [])
+
     assert result.exit_code == 0
-    assert "clawde" in result.stdout.lower()
+    assert started == [fake]  # the REPL ran against the built session
+
+
+def test_repl_build_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_session(monkeypatch, error=ProviderError("Anthropic API key is missing."))
+
+    result = runner.invoke(app, [])
+
+    assert result.exit_code == 1
+    assert "api key" in result.stdout.lower()
 
 
 # --- one-shot turn ------------------------------------------------------------
