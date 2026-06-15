@@ -12,6 +12,7 @@ effort, read the running usage.
 
 from __future__ import annotations
 
+import contextlib
 import platform
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -149,11 +150,13 @@ class Session:
                 images=tuple(images),
             )
         except KeyboardInterrupt:
-            renderer.finish()
+            # Usage is reported as zero on a failed turn: clawde does not count
+            # the tokens of an incomplete turn against the session.
+            _finish_quietly(renderer)
             self._console.print("\n[dim]Interrupted — the turn was cancelled.[/dim]")
             return TurnOutcome(status=TurnStatus.INTERRUPTED, usage=Usage())
         except (ProviderError, AgentError) as exc:
-            renderer.finish()
+            _finish_quietly(renderer)
             self._console.print(f"\n[red]Error:[/red] {exc}")
             return TurnOutcome(status=TurnStatus.ERROR, usage=Usage(), message=str(exc))
         renderer.finish()
@@ -190,6 +193,14 @@ def build_session(
         provider_name=provider or settings.default_provider,
         agent=agent,
     )
+
+
+def _finish_quietly(renderer: ReplyRenderer) -> None:
+    """Close the renderer's live region while handling a failed turn, ignoring
+    any rendering error so the turn still returns its outcome rather than masking
+    it with a cleanup exception."""
+    with contextlib.suppress(Exception):
+        renderer.finish()
 
 
 def _derive_title(prompt: str) -> str:
