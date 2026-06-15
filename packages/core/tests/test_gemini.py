@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from clawde_core.config import GeminiSettings, ProvidersSettings, Settings
-from clawde_core.models import ImageContent, Message, ToolCall, ToolSpec, Usage
+from clawde_core.models import ImageContent, Message, ReasoningEffort, ToolCall, ToolSpec, Usage
 from clawde_core.providers import PROVIDERS
 from clawde_core.providers import gemini as gemini_module
 from clawde_core.providers.base import ProviderError
@@ -77,6 +77,7 @@ def _response(
     *,
     text: str | None = None,
     function_calls: Sequence[types.FunctionCall] = (),
+    signatures: Sequence[bytes | None] = (),
     usage: types.GenerateContentResponseUsageMetadata | None = None,
     thought: str | None = None,
 ) -> types.GenerateContentResponse:
@@ -84,8 +85,9 @@ def _response(
 
     Faithful to the SDK shape the provider reads: text and tool calls travel as
     ``Part``s under ``candidates[0].content``, never as bare attributes — which
-    is what lets these tests exercise the real ``response.function_calls`` and
-    ``_text_of`` paths instead of a hand-faked ``.text``.
+    is what lets these tests exercise the real part-reading and ``_text_of`` paths
+    instead of a hand-faked ``.text``. ``signatures`` attaches Gemini 3's
+    ``thought_signature`` to the matching function-call part (padded with ``None``).
     """
     from google.genai import types
 
@@ -94,7 +96,11 @@ def _response(
         parts.append(types.Part(text=thought, thought=True))
     if text is not None:
         parts.append(types.Part(text=text))
-    parts.extend(types.Part(function_call=call) for call in function_calls)
+    padded = list(signatures) + [None] * (len(function_calls) - len(signatures))
+    parts.extend(
+        types.Part(function_call=call, thought_signature=sig)
+        for call, sig in zip(function_calls, padded, strict=True)
+    )
     return types.GenerateContentResponse(
         candidates=[types.Candidate(content=types.Content(role="model", parts=parts))],
         usage_metadata=usage,
@@ -169,6 +175,30 @@ def test_to_contents_maps_every_role() -> None:
 
     # system is excluded (it travels as system_instruction, not as a turn)
     assert [content.role for content in contents] == ["user", "model", "tool"]
+
+
+def test_to_contents_replays_function_call_thought_signature() -> None:
+    # Gemini 3 rejects a follow-up whose function-call part drops the signature it
+    # issued, so the replayed model turn must carry it back on the same part.
+    call = ToolCall(id="c1", name="glob", arguments={"pattern": "*"}, signature=b"sig-glob")
+
+    contents = gemini_module._to_contents([Message.assistant(tool_calls=(call,))])
+
+    parts = contents[0].parts
+    assert parts is not None
+    assert parts[0].function_call is not None
+    assert parts[0].function_call.name == "glob"
+    assert parts[0].thought_signature == b"sig-glob"
+
+
+def test_to_contents_omits_signature_for_unsigned_calls() -> None:
+    call = ToolCall(id="c1", name="bash", arguments={"command": "ls"})  # no signature
+
+    contents = gemini_module._to_contents([Message.assistant(tool_calls=(call,))])
+
+    parts = contents[0].parts
+    assert parts is not None
+    assert parts[0].thought_signature is None
 
 
 def test_to_contents_appends_image_parts_to_a_user_message() -> None:
@@ -336,6 +366,23 @@ def test_complete_does_not_emit_the_non_text_parts_warning(
     assert "non-text parts" not in caplog.text
 
 
+def test_complete_captures_function_call_thought_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.genai import types
+
+    response = _response(
+        function_calls=[types.FunctionCall(name="glob", args={"pattern": "*"})],
+        signatures=[b"sig-glob"],
+    )
+    _install_fake_client(monkeypatch, response)
+    provider = GeminiProvider(api_key="key", model="gemini-3-pro")
+
+    completion = provider.complete([Message.user("list files")], [])
+
+    assert completion.tool_calls[0].signature == b"sig-glob"
+
+
 # --- stream(): SSE deltas + final completion ----------------------------------
 
 
@@ -406,6 +453,78 @@ def test_count_tokens_treats_a_missing_total_as_zero(monkeypatch: pytest.MonkeyP
     provider = GeminiProvider(api_key="key", model=DEFAULT_MODEL)
 
     assert provider.count_tokens([Message.user("hi")], []) == 0
+
+
+def test_stream_captures_function_call_thought_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.genai import types
+
+    chunks: list[object] = [
+        _response(
+            function_calls=[types.FunctionCall(name="glob", args={"pattern": "*"})],
+            signatures=[b"sig-glob"],
+        )
+    ]
+    _install_fake_client(monkeypatch, chunks=chunks)
+    provider = GeminiProvider(api_key="key", model="gemini-3-pro")
+
+    final = list(provider.stream([Message.user("x")], []))[-1].completion
+
+    assert final is not None
+    assert final.tool_calls[0].signature == b"sig-glob"
+
+
+# --- reasoning effort -> thinking_config --------------------------------------
+
+
+def test_off_effort_sends_no_thinking_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.genai import types
+
+    client, _ = _install_fake_client(monkeypatch, _response(text="hi"))
+    provider = GeminiProvider(api_key="key", model=DEFAULT_MODEL)  # OFF by default
+
+    provider.complete([Message.user("hi")], [])
+
+    config = client.models.calls[0]["config"]
+    assert isinstance(config, types.GenerateContentConfig)
+    assert config.thinking_config is None
+
+
+def test_effort_sets_thinking_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.genai import types
+
+    client, _ = _install_fake_client(monkeypatch, _response(text="hi"))
+    provider = GeminiProvider(api_key="key", model="gemini-3-pro")  # thinking_level model
+    provider.set_reasoning_effort(ReasoningEffort.MEDIUM)
+
+    provider.complete([Message.user("hi")], [])
+
+    config = client.models.calls[0]["config"]
+    assert isinstance(config, types.GenerateContentConfig)
+    assert config.thinking_config is not None
+    assert config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
+
+
+@pytest.mark.parametrize("effort", [ReasoningEffort.XHIGH, ReasoningEffort.MAX])
+def test_levels_above_high_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, effort: ReasoningEffort
+) -> None:
+    _install_fake_client(monkeypatch, _response(text="hi"))
+    provider = GeminiProvider(api_key="key", model="gemini-3-pro")  # thinking_level tops at HIGH
+    provider.set_reasoning_effort(effort)
+
+    with pytest.raises(ProviderError, match="does not support reasoning effort"):
+        provider.complete([Message.user("hi")], [])
+
+
+def test_effort_on_a_non_thinking_level_model_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_client(monkeypatch, _response(text="hi"))
+    provider = GeminiProvider(api_key="key", model=DEFAULT_MODEL)  # 2.5 steers by token budget
+    provider.set_reasoning_effort(ReasoningEffort.HIGH)
+
+    with pytest.raises(ProviderError, match="does not support reasoning effort"):
+        provider.complete([Message.user("hi")], [])
 
 
 @pytest.mark.integration

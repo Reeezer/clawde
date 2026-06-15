@@ -15,7 +15,17 @@ from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from clawde_core.config import get_settings
-from clawde_core.models import Completion, Message, Role, StreamChunk, ToolCall, ToolSpec, Usage
+from clawde_core.models import (
+    Completion,
+    Message,
+    ReasoningEffort,
+    Role,
+    StreamChunk,
+    ThinkingBlock,
+    ToolCall,
+    ToolSpec,
+    Usage,
+)
 from clawde_core.providers import PROVIDERS
 from clawde_core.providers.base import ModelProvider, ProviderError
 
@@ -32,6 +42,26 @@ _CONTEXT_WINDOW = 200_000
 # untyped: the anthropic SDK's create()/stream() take TypedDict params; clawde
 # builds the equivalent wire dicts and lets the SDK validate them at the boundary.
 type _Wire = dict[str, Any]
+
+# Models with output_config.effort + adaptive thinking. clawde's six levels map
+# 1:1 onto Anthropic's (low … max) on these families; older Claude models (e.g.
+# haiku, 3.x) have no effort control, so any non-OFF effort there is rejected.
+_EFFORT_MODELS = (
+    "claude-opus-4-6",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-fable-5",
+    "claude-mythos-5",
+)
+_EFFORTS: dict[ReasoningEffort, str] = {
+    effort: effort.value for effort in ReasoningEffort if effort is not ReasoningEffort.OFF
+}
+
+
+def _effort_map(model: str) -> dict[ReasoningEffort, str]:
+    """The effort→native mapping for ``model`` (empty when it has no effort control)."""
+    return dict(_EFFORTS) if model.startswith(_EFFORT_MODELS) else {}
 
 
 class AnthropicProvider(ModelProvider):
@@ -88,6 +118,12 @@ class AnthropicProvider(ModelProvider):
         rendered = _to_tools(tools)
         if rendered:
             request["tools"] = rendered
+        effort = self._resolve_effort(_effort_map(self._model), model=self._model)
+        if effort is not None:
+            # Adaptive thinking is the modern on-switch (a fixed budget_tokens 400s
+            # on current Claude models); output_config.effort tunes the depth.
+            request["thinking"] = {"type": "adaptive"}
+            request["output_config"] = {"effort": effort}
         return request
 
     def _client(self) -> Anthropic:
@@ -132,7 +168,9 @@ def _to_messages(messages: Sequence[Message]) -> list[_Wire]:
                 }
             )
         elif message.role is Role.ASSISTANT:
-            blocks: list[_Wire] = []
+            # Thinking blocks must lead the turn (and be sent back unchanged) when
+            # extended thinking is interleaved with tool use, or the API rejects it.
+            blocks: list[_Wire] = [_thinking_wire(block) for block in message.thinking]
             if message.content:
                 blocks.append({"type": "text", "text": message.content})
             for call in message.tool_calls:
@@ -173,9 +211,17 @@ def _to_tools(tools: Sequence[ToolSpec]) -> list[_Wire]:
     ]
 
 
+def _thinking_wire(block: ThinkingBlock) -> _Wire:
+    """Render a preserved reasoning block back to its Anthropic wire shape."""
+    if block.redacted_data is not None:
+        return {"type": "redacted_thinking", "data": block.redacted_data}
+    return {"type": "thinking", "thinking": block.text, "signature": block.signature}
+
+
 def _to_completion(message: AnthropicMessage) -> Completion:
     texts: list[str] = []
     calls: list[ToolCall] = []
+    thinking: list[ThinkingBlock] = []
     for block in message.content:
         if block.type == "text":
             texts.append(block.text)
@@ -188,7 +234,16 @@ def _to_completion(message: AnthropicMessage) -> Completion:
                     arguments=dict(raw) if isinstance(raw, dict) else {},
                 )
             )
-    return Completion(text="".join(texts), tool_calls=tuple(calls), usage=_to_usage(message.usage))
+        elif block.type == "thinking":
+            thinking.append(ThinkingBlock(text=block.thinking, signature=block.signature))
+        elif block.type == "redacted_thinking":
+            thinking.append(ThinkingBlock(redacted_data=block.data))
+    return Completion(
+        text="".join(texts),
+        tool_calls=tuple(calls),
+        thinking=tuple(thinking),
+        usage=_to_usage(message.usage),
+    )
 
 
 def _to_usage(usage: AnthropicUsage) -> Usage:

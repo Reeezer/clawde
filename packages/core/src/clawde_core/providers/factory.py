@@ -30,12 +30,15 @@ def build_provider(provider: str | None = None, model: str | None = None) -> Mod
     for this process. An unknown name raises ``RegistryError`` listing the known
     providers. When ``Settings.tool_calling`` is ``json``, the built provider is
     wrapped in the JSON-in-text fallback so a model without native tool support
-    can still drive the loop.
+    can still drive the loop. The built provider's reasoning effort is seeded from
+    ``Settings.default_reasoning_effort`` (the CLI's ``--effort`` overrides it).
     """
     settings = get_settings()
     if model is not None:
         settings.default_model = model
     built = PROVIDERS.create(provider or settings.default_provider)
-    if settings.tool_calling is ToolCalling.JSON:
-        return JsonToolCallingProvider(built)
-    return built
+    resolved: ModelProvider = (
+        JsonToolCallingProvider(built) if settings.tool_calling is ToolCalling.JSON else built
+    )
+    resolved.set_reasoning_effort(settings.default_reasoning_effort)
+    return resolved

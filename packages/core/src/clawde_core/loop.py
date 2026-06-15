@@ -119,7 +119,11 @@ class Agent:
             if on_budget is not None:
                 on_budget(self._reported_budget(completion.usage))
             self._history.append(
-                Message.assistant(content=completion.text, tool_calls=completion.tool_calls)
+                Message.assistant(
+                    content=completion.text,
+                    tool_calls=completion.tool_calls,
+                    thinking=completion.thinking,
+                )
             )
             if not completion.tool_calls:
                 return Turn(

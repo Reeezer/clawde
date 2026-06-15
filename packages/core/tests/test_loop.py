@@ -11,6 +11,7 @@ from clawde_core.models import (
     Message,
     Role,
     StreamChunk,
+    ThinkingBlock,
     TokenBudget,
     ToolCall,
     ToolSpec,
@@ -79,6 +80,16 @@ def test_answers_without_tools() -> None:
     assert turn.usage == Usage(input_tokens=5, output_tokens=2)
     assert provider.received[0][0] == Message.system("sys")
     assert provider.received[0][1] == Message.user("hi")
+
+
+def test_thinking_blocks_are_carried_onto_the_assistant_turn() -> None:
+    block = ThinkingBlock(text="reasoned", signature="sig-1")
+    provider = FakeProvider([Completion(text="answer", thinking=(block,))])
+    agent = Agent(provider, [], system_prompt="s")
+
+    turn = agent.run_turn("hi")
+
+    assert turn.messages[1].thinking == (block,)  # preserved for the next request
 
 
 def test_run_turn_attaches_images_to_the_user_message() -> None:

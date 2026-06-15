@@ -14,7 +14,16 @@ from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING
 
 from clawde_core.config import get_settings
-from clawde_core.models import Completion, Message, Role, StreamChunk, ToolCall, ToolSpec, Usage
+from clawde_core.models import (
+    Completion,
+    Message,
+    ReasoningEffort,
+    Role,
+    StreamChunk,
+    ToolCall,
+    ToolSpec,
+    Usage,
+)
 from clawde_core.providers import PROVIDERS
 from clawde_core.providers.base import ModelProvider, ProviderError
 
@@ -25,6 +34,26 @@ if TYPE_CHECKING:
 DEFAULT_MODEL = "gemini-2.5-flash"
 # Gemini 2.5 Flash/Pro expose a ~1,048,576-token (1M) input window (ADR-0004).
 _CONTEXT_WINDOW = 1_048_576
+
+# clawde's normalised effort → Gemini's ``ThinkingLevel`` name (kept as a string
+# so the SDK enum stays a lazy import). thinking_level is a Gemini-3 control that
+# tops out at HIGH, so XHIGH / MAX are reported unsupported rather than clamped.
+# The 2.5 family steers thinking by token budget instead and so has no level map.
+_THINKING_LEVELS: dict[ReasoningEffort, str] = {
+    ReasoningEffort.LOW: "LOW",
+    ReasoningEffort.MEDIUM: "MEDIUM",
+    ReasoningEffort.HIGH: "HIGH",
+}
+
+# Model families that accept thinking_level (Gemini 3 and later). Earlier
+# families (2.5, 1.5) steer thinking by token budget, which clawde doesn't drive,
+# so effort on them is reported unsupported.
+_THINKING_LEVEL_MODELS = ("gemini-3",)
+
+
+def _effort_map(model: str) -> dict[ReasoningEffort, str]:
+    """The effort→ThinkingLevel mapping for ``model`` (empty when it has no levels)."""
+    return dict(_THINKING_LEVELS) if model.startswith(_THINKING_LEVEL_MODELS) else {}
 
 
 class GeminiProvider(ModelProvider):
@@ -43,7 +72,7 @@ class GeminiProvider(ModelProvider):
         response = self._client().models.generate_content(
             model=self._model,
             contents=_to_contents(messages),
-            config=_build_config(messages, tools),
+            config=_build_config(messages, tools, self._thinking_level()),
         )
         return _to_completion(response)
 
@@ -51,19 +80,19 @@ class GeminiProvider(ModelProvider):
         self, messages: Sequence[Message], tools: Sequence[ToolSpec]
     ) -> Iterator[StreamChunk]:
         text_parts: list[str] = []
-        calls: list[types.FunctionCall] = []
+        calls: list[tuple[types.FunctionCall, bytes | None]] = []
         usage: types.GenerateContentResponseUsageMetadata | None = None
         responses = self._client().models.generate_content_stream(
             model=self._model,
             contents=_to_contents(messages),
-            config=_build_config(messages, tools),
+            config=_build_config(messages, tools, self._thinking_level()),
         )
         for response in responses:
             delta = _text_of(response)
             if delta:
                 text_parts.append(delta)
                 yield StreamChunk(text=delta)
-            calls.extend(response.function_calls or [])
+            calls.extend(_function_calls(response))
             if response.usage_metadata is not None:
                 usage = response.usage_metadata
         yield StreamChunk(
@@ -90,6 +119,10 @@ class GeminiProvider(ModelProvider):
         )
         return counted.total_tokens or 0
 
+    def _thinking_level(self) -> str | None:
+        """Resolve the current effort to a Gemini ThinkingLevel name (``None`` for OFF)."""
+        return self._resolve_effort(_effort_map(self._model), model=self._model)
+
     def _client(self) -> genai.Client:
         if self._client_cache is None:
             _ensure_sdk()
@@ -110,7 +143,7 @@ def _ensure_sdk() -> None:
 
 
 def _build_config(
-    messages: Sequence[Message], tools: Sequence[ToolSpec]
+    messages: Sequence[Message], tools: Sequence[ToolSpec], level: str | None
 ) -> types.GenerateContentConfig:
     from google.genai import types
 
@@ -118,7 +151,17 @@ def _build_config(
         system_instruction=_system_instruction(messages),
         tools=_to_gemini_tools(tools),  # type: ignore[arg-type]
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        thinking_config=_to_thinking_config(level),
     )
+
+
+def _to_thinking_config(level: str | None) -> types.ThinkingConfig | None:
+    """Build a Gemini ``ThinkingConfig`` from a resolved level name (``None`` for OFF)."""
+    if level is None:
+        return None
+    from google.genai import types
+
+    return types.ThinkingConfig(thinking_level=types.ThinkingLevel[level])
 
 
 def _system_instruction(messages: Sequence[Message]) -> str | None:
@@ -149,9 +192,13 @@ def _to_contents(messages: Sequence[Message]) -> list[types.Content]:
             if message.content:
                 parts.append(types.Part.from_text(text=message.content))
             for call in message.tool_calls:
+                # Replay the thought_signature Gemini 3 issued with the call, or the
+                # next request is rejected (a 400 INVALID_ARGUMENT). None on 2.5 and
+                # other providers' calls, which the SDK simply omits.
                 parts.append(
                     types.Part(
-                        function_call=types.FunctionCall(name=call.name, args=dict(call.arguments))
+                        function_call=types.FunctionCall(name=call.name, args=dict(call.arguments)),
+                        thought_signature=call.signature,
                     )
                 )
             contents.append(types.Content(role="model", parts=parts))
@@ -179,40 +226,64 @@ def _to_gemini_tools(specs: Sequence[ToolSpec]) -> list[types.Tool] | None:
     return [types.Tool(function_declarations=declarations)]
 
 
+def _parts_of(response: types.GenerateContentResponse) -> list[types.Part]:
+    """The model turn's parts, or ``[]`` when the response carries no content."""
+    candidate = response.candidates[0] if response.candidates else None
+    if candidate is None or candidate.content is None or candidate.content.parts is None:
+        return []
+    return list(candidate.content.parts)
+
+
 def _text_of(response: types.GenerateContentResponse) -> str:
     """Concatenate the response's text parts, skipping any thought parts.
 
     Reads ``candidates[0].content.parts`` directly rather than the SDK's
     ``response.text`` accessor, which logs a warning whenever the response also
     carries a non-text part — i.e. on every turn the model answers with a
-    ``function_call``. clawde gathers those calls separately via
-    ``response.function_calls``, so that warning is pure noise; we sidestep it by
-    reading the parts ourselves.
+    ``function_call``. clawde gathers those calls separately, so that warning is
+    pure noise; we sidestep it by reading the parts ourselves.
     """
-    candidate = response.candidates[0] if response.candidates else None
-    if candidate is None or candidate.content is None or candidate.content.parts is None:
-        return ""
-    texts: list[str] = []
-    for part in candidate.content.parts:
-        if part.thought:
-            continue
-        if isinstance(part.text, str):
-            texts.append(part.text)
-    return "".join(texts)
+    return "".join(
+        part.text for part in _parts_of(response) if not part.thought and isinstance(part.text, str)
+    )
+
+
+def _function_calls(
+    response: types.GenerateContentResponse,
+) -> list[tuple[types.FunctionCall, bytes | None]]:
+    """The response's function calls, each paired with its ``thought_signature``.
+
+    Gemini 3 signs each function-call part; the signature lives on the *part*, not
+    the ``FunctionCall``, and the SDK's ``response.function_calls`` accessor drops
+    it. clawde reads the parts itself so the signature can ride home on the
+    :class:`ToolCall` and be replayed — Gemini 3 rejects a follow-up that omits it.
+    """
+    return [
+        (part.function_call, part.thought_signature)
+        for part in _parts_of(response)
+        if part.function_call is not None
+    ]
 
 
 def _to_completion(response: types.GenerateContentResponse) -> Completion:
     return Completion(
         text=_text_of(response),
-        tool_calls=_to_tool_calls(response.function_calls or []),
+        tool_calls=_to_tool_calls(_function_calls(response)),
         usage=_to_usage(response.usage_metadata),
     )
 
 
-def _to_tool_calls(function_calls: Sequence[types.FunctionCall]) -> tuple[ToolCall, ...]:
+def _to_tool_calls(
+    calls: Sequence[tuple[types.FunctionCall, bytes | None]],
+) -> tuple[ToolCall, ...]:
     return tuple(
-        ToolCall(id=f"{call.name}-{index}", name=call.name or "", arguments=dict(call.args or {}))
-        for index, call in enumerate(function_calls)
+        ToolCall(
+            id=f"{call.name}-{index}",
+            name=call.name or "",
+            arguments=dict(call.args or {}),
+            signature=signature,
+        )
+        for index, (call, signature) in enumerate(calls)
     )
 
 

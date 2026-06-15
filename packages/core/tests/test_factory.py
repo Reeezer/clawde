@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from clawde_core.config import get_settings
+from clawde_core.models import ReasoningEffort
 from clawde_core.providers import factory
 from clawde_core.providers.anthropic import AnthropicProvider
 from clawde_core.providers.gemini import GeminiProvider
@@ -59,3 +60,28 @@ def test_build_provider_wraps_in_json_fallback_when_configured(
 
     assert isinstance(provider, JsonToolCallingProvider)
     assert isinstance(provider._inner, GeminiProvider)  # native provider wrapped, not replaced
+
+
+def test_build_provider_seeds_reasoning_effort_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLAWDE_PROVIDERS__ANTHROPIC__API_KEY", "k")
+    monkeypatch.setenv("CLAWDE_DEFAULT_REASONING_EFFORT", "high")
+
+    provider = factory.build_provider("anthropic")
+
+    assert provider.reasoning_effort is ReasoningEffort.HIGH
+
+
+def test_build_provider_seeds_reasoning_effort_through_the_json_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLAWDE_PROVIDERS__GEMINI__API_KEY", "k")
+    monkeypatch.setenv("CLAWDE_TOOL_CALLING", "json")
+    monkeypatch.setenv("CLAWDE_DEFAULT_REASONING_EFFORT", "low")
+
+    provider = factory.build_provider("gemini")
+
+    assert isinstance(provider, JsonToolCallingProvider)
+    assert provider.reasoning_effort is ReasoningEffort.LOW  # mirrored from the inner provider
+    assert provider._inner.reasoning_effort is ReasoningEffort.LOW

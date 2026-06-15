@@ -7,8 +7,10 @@ from clawde_core.models import (
     Completion,
     ImageContent,
     Message,
+    ReasoningEffort,
     Role,
     StreamChunk,
+    ThinkingBlock,
     TokenBudget,
     ToolCall,
     ToolResult,
@@ -100,6 +102,29 @@ def test_usage_addition_is_immutable() -> None:
     # operands are untouched (immutability)
     assert a.input_tokens == 10
     assert b.output_tokens == 7
+
+
+def test_reasoning_effort_values() -> None:
+    assert [e.value for e in ReasoningEffort] == ["off", "low", "medium", "high", "xhigh", "max"]
+
+
+def test_thinking_block_normal_and_redacted() -> None:
+    normal = ThinkingBlock(text="step", signature="sig-abc")
+    assert normal.text == "step"
+    assert normal.signature == "sig-abc"
+    assert normal.redacted_data is None
+
+    redacted = ThinkingBlock(redacted_data="opaque")
+    assert (redacted.text, redacted.signature, redacted.redacted_data) == ("", None, "opaque")
+
+
+def test_assistant_and_completion_carry_thinking_defaulting_empty() -> None:
+    assert Message.assistant("hi").thinking == ()
+    assert Completion().thinking == ()
+
+    block = ThinkingBlock(text="reasoned", signature="sig-1")
+    assert Message.assistant(content="a", thinking=(block,)).thinking == (block,)
+    assert Completion(text="a", thinking=(block,)).thinking == (block,)
 
 
 def test_completion_defaults() -> None:

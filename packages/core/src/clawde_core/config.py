@@ -13,6 +13,8 @@ from functools import lru_cache
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from clawde_core.models import ReasoningEffort
+
 
 class ToolCalling(StrEnum):
     """How clawde asks a model to call tools.
@@ -71,6 +73,7 @@ class Settings(BaseSettings):
     default_provider: str = "anthropic"
     default_model: str | None = None
     tool_calling: ToolCalling = ToolCalling.NATIVE
+    default_reasoning_effort: ReasoningEffort = ReasoningEffort.OFF
     providers: ProvidersSettings = Field(default_factory=ProvidersSettings)
 
 
