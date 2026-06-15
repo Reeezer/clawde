@@ -20,10 +20,12 @@ from rich.console import Console
 from rich.text import Text
 
 from clawde_cli.commands import dispatch
+from clawde_cli.gitinfo import current_git_context
+from clawde_cli.header import build_header_state, render_header
 from clawde_cli.session import Session
 
 PROMPT = "› "
-_WELCOME_STYLE = "dim"
+_HINT_STYLE = "dim"
 
 type LineReader = Callable[[], str]
 
@@ -36,7 +38,8 @@ def run_repl(session: Session, console: Console, read_line: LineReader) -> None:
     anything else drives a turn. A ``KeyboardInterrupt`` raised while reading
     cancels that line and the loop reads the next.
     """
-    console.print(_welcome())
+    console.print(render_header(build_header_state(session, current_git_context())))
+    console.print(_hint())
     while True:
         try:
             line = read_line().strip()
@@ -75,8 +78,5 @@ def interactive_line_reader(
     return read
 
 
-def _welcome() -> Text:
-    return Text(
-        "clawde — interactive session. Type /help for commands, Ctrl-D or /exit to quit.",
-        style=_WELCOME_STYLE,
-    )
+def _hint() -> Text:
+    return Text("Type /help for commands · Ctrl-D or /exit to quit.", style=_HINT_STYLE)

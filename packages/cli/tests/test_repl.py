@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 from collections.abc import Callable, Iterator, Sequence
 
+import pytest
 from clawde_core.loop import Agent
 from clawde_core.models import Completion, Message, StreamChunk, ToolSpec, Usage
 from clawde_core.providers.base import ModelProvider
@@ -10,6 +11,8 @@ from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
+from clawde_cli import repl
+from clawde_cli.gitinfo import GitContext
 from clawde_cli.repl import interactive_line_reader, run_repl
 from clawde_cli.session import Session
 
@@ -66,13 +69,23 @@ def _session(provider: ModelProvider, console: Console) -> Session:
     return Session(console=console, provider=provider, provider_name="anthropic", agent=agent)
 
 
-def test_welcome_is_printed_and_eof_ends_the_loop() -> None:
+@pytest.fixture(autouse=True)
+def _stub_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        repl, "current_git_context", lambda: GitContext(branch="feature/x", worktree="wt")
+    )
+
+
+def test_header_and_hint_are_printed_then_eof_ends_the_loop() -> None:
     console = _console()
     provider = _FakeProvider()
 
     run_repl(_session(provider, console), console, _scripted_reader())
 
-    assert "interactive session" in console.export_text()
+    out = console.export_text()
+    assert "feature/x" in out  # the header announces the branch
+    assert "fake-model" in out  # ... and the active model
+    assert "/help" in out  # the hint points at the commands
     assert provider.received == []  # no input -> no turn
 
 
