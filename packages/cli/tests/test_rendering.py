@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from clawde_core.models import TokenBudget, ToolCall, ToolResult, Usage
+from clawde_core.models import CompactionEvent, TokenBudget, ToolCall, ToolResult, Usage
 from rich.color import Color
 from rich.console import Console, RenderableType
 from rich.segment import Segment
@@ -181,6 +181,19 @@ def test_text_step_persists_behind_a_point() -> None:
     assert "Hello world" in out
     assert STEP_GLYPH in out  # the white step point sits beside the text
     assert not any(frame in out for frame in SPINNER_FRAMES)  # the spinner left no trace
+
+
+def test_on_compaction_shows_a_compaction_step() -> None:
+    console = _recording_console()
+    renderer = ReplyRenderer(console, status=_stub_status())
+
+    renderer.begin()
+    renderer.on_compaction(
+        CompactionEvent(messages_before=12, messages_after=4, tokens_before=900, tokens_after=200)
+    )
+    renderer.finish()
+
+    assert "Compacted" in console.export_text()
 
 
 def test_steps_are_separated_by_a_blank_line() -> None:

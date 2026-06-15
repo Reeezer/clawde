@@ -68,6 +68,10 @@ class GeminiProvider(ModelProvider):
         self._model = model
         self._client_cache: genai.Client | None = None
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         response = self._client().models.generate_content(
             model=self._model,

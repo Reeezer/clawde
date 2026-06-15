@@ -36,6 +36,10 @@ class FakeProvider(ModelProvider):
         self.received: list[tuple[Message, ...]] = []
         self._context_window = context_window
 
+    @property
+    def model(self) -> str:
+        return "fake-1"
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self.received.append(tuple(messages))
         return self._queue.pop(0)
@@ -52,6 +56,10 @@ class FakeStreamingProvider(ModelProvider):
 
     def __init__(self, scripts: Sequence[Sequence[StreamChunk]]) -> None:
         self._scripts = [list(script) for script in scripts]
+
+    @property
+    def model(self) -> str:
+        return "fake-stream-1"
 
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         raise NotImplementedError  # streaming tests exercise stream() only
@@ -77,6 +85,56 @@ class RecordingTool(Tool):
     def run(self, arguments: Mapping[str, object]) -> str:
         self.calls.append(dict(arguments))
         return self._output
+
+
+def test_clear_resets_the_conversation_history() -> None:
+    provider = FakeProvider(
+        [
+            Completion(text="first", usage=Usage(output_tokens=1)),
+            Completion(text="second", usage=Usage(output_tokens=1)),
+        ]
+    )
+    agent = Agent(provider, [], system_prompt="sys")
+    agent.run_turn("remember apples")
+    agent.clear()
+
+    agent.run_turn("what now")
+
+    second_sent = provider.received[-1]
+    assert all("apples" not in message.content for message in second_sent)
+    assert any("what now" in message.content for message in second_sent)
+
+
+class _InterruptOnceProvider(ModelProvider):
+    """Raises KeyboardInterrupt on the first call, then answers normally."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.received: list[tuple[Message, ...]] = []
+
+    @property
+    def model(self) -> str:
+        return "interrupt-1"
+
+    def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
+        self.received.append(tuple(messages))
+        self.calls += 1
+        if self.calls == 1:
+            raise KeyboardInterrupt
+        return Completion(text="ok")
+
+
+def test_keyboard_interrupt_rolls_back_the_interrupted_turn() -> None:
+    provider = _InterruptOnceProvider()
+    agent = Agent(provider, [], system_prompt="sys")
+    with pytest.raises(KeyboardInterrupt):
+        agent.run_turn("cancelled")
+
+    agent.run_turn("next one")
+
+    # The cancelled turn left no trace: the second turn carries only its own user message.
+    user_messages = [m.content for m in provider.received[-1] if m.role is Role.USER]
+    assert user_messages == ["next one"]
 
 
 def test_answers_without_tools() -> None:
@@ -351,3 +409,35 @@ def test_default_agent_never_compacts_even_when_over_the_window() -> None:
 
     assert events == []  # the no-op compactor changes nothing
     assert len(provider.received) == 2  # and never makes a summarisation call
+
+
+def test_compact_on_demand_shrinks_the_conversation() -> None:
+    provider = FakeProvider(
+        [
+            Completion(text="a1"),
+            Completion(text="a2"),
+            Completion(text="a3"),
+            Completion(text="recap"),
+        ]
+    )
+    agent = Agent(
+        provider, [], system_prompt="s", compactor=SummarisingCompactor(keep_recent_turns=1)
+    )
+    agent.run_turn("u1")
+    agent.run_turn("u2")
+    agent.run_turn("u3")
+
+    event = agent.compact()  # /compact: summarise the older turns now
+
+    assert event is not None
+    assert event.messages_before == 6
+    assert event.messages_after == 4  # a 2-message recap + the one kept turn
+
+
+def test_compact_on_demand_returns_none_when_there_is_nothing_to_do() -> None:
+    provider = FakeProvider([Completion(text="a1")])
+    agent = Agent(provider, [], system_prompt="s")  # default no-op compactor
+
+    agent.run_turn("u1")
+
+    assert agent.compact() is None

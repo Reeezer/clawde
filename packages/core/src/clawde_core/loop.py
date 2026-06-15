@@ -78,6 +78,19 @@ class Agent:
         self._history = History()
         self._budget_estimate = TokenBudget(limit=provider.context_window, used=0)
 
+    def clear(self) -> None:
+        """Drop the conversation, starting the next turn fresh (the ``/clear`` command)."""
+        self._history = History()
+        self._budget_estimate = TokenBudget(limit=self._provider.context_window, used=0)
+
+    def compact(self) -> CompactionEvent | None:
+        """Compact the conversation now, on demand (the ``/compact`` command).
+
+        Runs the configured compactor once and re-anchors the running token
+        estimate, returning what it did — or ``None`` when there was nothing to
+        compact (the strategy left the history unchanged)."""
+        return self._compact()
+
     def run_turn(self, user_input: str, *, images: tuple[ImageContent, ...] = ()) -> Turn:
         """Drive one turn to completion, collecting the whole reply."""
         return self._drive(
@@ -132,42 +145,50 @@ class Agent:
         self._record(Message.user(user_input, images=images), turn)
         usage = Usage()
         compacted_this_turn = False
-        for _ in range(self._max_iterations):
-            if not compacted_this_turn and self._over_budget():
-                compacted_this_turn = True
-                event = self._compact()
-                if event is not None and on_compaction is not None:
-                    on_compaction(event)
-            completion = next_completion()
-            usage += completion.usage
-            if on_usage is not None:
-                on_usage(usage)
-            self._budget_estimate = self._reported_budget(completion.usage)
-            if on_budget is not None:
-                on_budget(self._budget_estimate)
-            self._record(
-                Message.assistant(
-                    content=completion.text,
-                    tool_calls=completion.tool_calls,
-                    thinking=completion.thinking,
-                ),
-                turn,
-            )
-            if not completion.tool_calls:
-                return Turn(final_text=completion.text, messages=tuple(turn), usage=usage)
-            for call in completion.tool_calls:
-                if on_tool_call is not None:
-                    on_tool_call(call)
-                result = self._execute(call)
-                if on_tool_result is not None:
-                    on_tool_result(result)
+        try:
+            for _ in range(self._max_iterations):
+                if not compacted_this_turn and self._over_budget():
+                    compacted_this_turn = True
+                    event = self._compact()
+                    if event is not None and on_compaction is not None:
+                        on_compaction(event)
+                completion = next_completion()
+                usage += completion.usage
+                if on_usage is not None:
+                    on_usage(usage)
+                self._budget_estimate = self._reported_budget(completion.usage)
+                if on_budget is not None:
+                    on_budget(self._budget_estimate)
                 self._record(
-                    Message.tool(
-                        tool_call_id=result.tool_call_id, content=result.content, name=call.name
+                    Message.assistant(
+                        content=completion.text,
+                        tool_calls=completion.tool_calls,
+                        thinking=completion.thinking,
                     ),
                     turn,
                 )
-        raise AgentError(f"agent did not answer within {self._max_iterations} iterations")
+                if not completion.tool_calls:
+                    return Turn(final_text=completion.text, messages=tuple(turn), usage=usage)
+                for call in completion.tool_calls:
+                    if on_tool_call is not None:
+                        on_tool_call(call)
+                    result = self._execute(call)
+                    if on_tool_result is not None:
+                        on_tool_result(result)
+                    self._record(
+                        Message.tool(
+                            tool_call_id=result.tool_call_id, content=result.content, name=call.name
+                        ),
+                        turn,
+                    )
+            raise AgentError(f"agent did not answer within {self._max_iterations} iterations")
+        except KeyboardInterrupt:
+            # A Ctrl-C mid-turn rolls the half-built turn out of history, so the next
+            # turn isn't left with a dangling user message (the REPL, #10). ``turn``
+            # is this turn's messages; they're the tail of the history even after a
+            # mid-turn compaction, which keeps the current turn whole.
+            self._history.truncate(len(self._history) - len(turn))
+            raise
 
     def _record(self, message: Message, turn: list[Message]) -> None:
         """Append a message to the running history and to this turn's own record.

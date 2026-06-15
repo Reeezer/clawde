@@ -39,6 +39,10 @@ class JsonToolCallingProvider(ModelProvider):
         self._inner = inner
 
     @property
+    def model(self) -> str:
+        return self._inner.model
+
+    @property
     def reasoning_effort(self) -> ReasoningEffort:
         return self._inner.reasoning_effort
 

@@ -33,6 +33,22 @@ def test_messages_is_an_immutable_snapshot() -> None:
     assert history.messages == (Message.user("a"), Message.user("b"))
 
 
+def test_truncate_drops_messages_from_an_index() -> None:
+    history = History([Message.user("a"), Message.assistant("b"), Message.user("c")])
+
+    history.truncate(1)
+
+    assert history.messages == (Message.user("a"),)
+
+
+def test_truncate_past_the_end_is_a_no_op() -> None:
+    history = History([Message.user("a")])
+
+    history.truncate(5)
+
+    assert history.messages == (Message.user("a"),)
+
+
 def test_turns_of_empty_history_is_empty() -> None:
     assert History().turns() == ()
 

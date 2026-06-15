@@ -18,6 +18,10 @@ class FakeSummariser(ModelProvider):
         self._summary = summary
         self.received: list[tuple[Message, ...]] = []
 
+    @property
+    def model(self) -> str:
+        return "fake-summariser"
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self.received.append(tuple(messages))
         return Completion(text=self._summary)

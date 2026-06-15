@@ -80,6 +80,10 @@ class AnthropicProvider(ModelProvider):
         self._max_tokens = max_tokens
         self._client_cache: Anthropic | None = None
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         response = self._client().messages.create(**self._request(messages, tools))
         return _to_completion(response)

@@ -52,6 +52,16 @@ class ModelProvider(ABC):
     always honoured by sending no reasoning field.
     """
 
+    @property
+    @abstractmethod
+    def model(self) -> str:
+        """The active model's id (e.g. ``claude-opus-4-8``).
+
+        Part of the provider's identity: the status header and ``/model`` read
+        it, and every impl already holds it to build requests. The JSON-in-text
+        wrapper delegates to the provider it wraps.
+        """
+
     _reasoning_effort: ReasoningEffort = ReasoningEffort.OFF
 
     @property

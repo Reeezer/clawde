@@ -49,5 +49,10 @@ class History:
                 turns[-1].append(message)
         return tuple(tuple(turn) for turn in turns)
 
+    def truncate(self, length: int) -> None:
+        """Drop every message from index ``length`` on — e.g. to roll back an
+        interrupted turn so the conversation has no half-built tail."""
+        del self._messages[length:]
+
     def __len__(self) -> int:
         return len(self._messages)

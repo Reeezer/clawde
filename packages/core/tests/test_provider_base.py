@@ -11,6 +11,10 @@ from clawde_core.providers.base import DEFAULT_CONTEXT_WINDOW, ModelProvider, Pr
 class _TextOnlyProvider(ModelProvider):
     """Minimal provider with no image support: guards before answering."""
 
+    @property
+    def model(self) -> str:
+        return "text-only-1"
+
     def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
         self._reject_image_input(messages)
         return Completion(text="ok")
