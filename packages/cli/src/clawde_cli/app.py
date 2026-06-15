@@ -90,11 +90,22 @@ def _run_turn(
 
 
 def _run_repl(provider: str | None, model: str | None, effort: ReasoningEffort | None) -> None:
+    if not _stdin_is_interactive():
+        _fail(
+            "clawde's interactive REPL needs a terminal. "
+            'Pass a prompt for one-shot, e.g. clawde "list the python files".'
+        )
     try:
         session = build_session(console, provider=provider, model=model, effort=effort)
     except (ProviderError, RegistryError) as exc:
         _fail(str(exc))
     run_repl(session, console, interactive_line_reader())
+
+
+def _stdin_is_interactive() -> bool:
+    """Whether stdin is a terminal — the REPL needs one (prompt_toolkit can't
+    bind a pipe or redirect, so a non-tty gets a friendly hint, not a traceback)."""
+    return sys.stdin.isatty()
 
 
 def _load_images(paths: Sequence[Path]) -> tuple[ImageContent, ...]:

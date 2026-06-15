@@ -85,6 +85,7 @@ def test_version_flag_prints_the_version() -> None:
 
 def test_no_prompt_starts_the_repl(monkeypatch: pytest.MonkeyPatch) -> None:
     _, fake = _install_session(monkeypatch)
+    monkeypatch.setattr(app_module, "_stdin_is_interactive", lambda: True)
     started: list[object] = []
     monkeypatch.setattr(app_module, "interactive_line_reader", lambda: lambda: "")
     monkeypatch.setattr(
@@ -99,11 +100,25 @@ def test_no_prompt_starts_the_repl(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_repl_build_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_session(monkeypatch, error=ProviderError("Anthropic API key is missing."))
+    monkeypatch.setattr(app_module, "_stdin_is_interactive", lambda: True)
 
     result = runner.invoke(app, [])
 
     assert result.exit_code == 1
     assert "api key" in result.stdout.lower()
+
+
+def test_repl_requires_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module, "_stdin_is_interactive", lambda: False)
+
+    result = runner.invoke(app, [])
+
+    assert result.exit_code == 1
+    assert "terminal" in result.stdout.lower()
+
+
+def test_stdin_is_interactive_returns_a_bool() -> None:
+    assert isinstance(app_module._stdin_is_interactive(), bool)
 
 
 # --- one-shot turn ------------------------------------------------------------
