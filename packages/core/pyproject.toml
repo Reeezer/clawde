@@ -18,7 +18,9 @@ dependencies = [
 # path stays import-clean. Ollama / OpenAI-compatible endpoints are reached over
 # plain HTTP and need no extra.
 anthropic = ["anthropic>=0.40"]
-openai = ["openai>=1.50"]
+# tiktoken is the OpenAI-compatible provider's local, offline token counter
+# (ADR-0004); lazy-imported inside count_tokens so the base install stays light.
+openai = ["openai>=1.50", "tiktoken>=0.7"]
 gemini = ["google-genai>=2.0"]
 
 [build-system]
@@ -77,4 +79,7 @@ dev = [
     "google-genai>=2.0",
     "anthropic>=0.40",
     "openai>=1.50",
+    # tiktoken backs the OpenAI count_tokens override; tests fake it to avoid the
+    # first-use vocabulary download (offline-by-default), so it must be installed.
+    "tiktoken>=0.7",
 ]

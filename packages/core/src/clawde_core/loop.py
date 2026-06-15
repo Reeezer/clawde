@@ -15,10 +15,12 @@ from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
+from clawde_core.context.history import History
 from clawde_core.models import (
     Completion,
     ImageContent,
     Message,
+    TokenBudget,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -59,7 +61,7 @@ class Agent:
         self._tools = {tool.spec.name: tool for tool in tools}
         self._system_prompt = system_prompt
         self._max_iterations = max_iterations
-        self._history: list[Message] = []
+        self._history = History()
 
     def run_turn(self, user_input: str, *, images: tuple[ImageContent, ...] = ()) -> Turn:
         """Drive one turn to completion, collecting the whole reply."""
@@ -76,19 +78,22 @@ class Agent:
         on_tool_call: Callable[[ToolCall], None] | None = None,
         on_tool_result: Callable[[ToolResult], None] | None = None,
         on_usage: Callable[[Usage], None] | None = None,
+        on_budget: Callable[[TokenBudget], None] | None = None,
         *,
         images: tuple[ImageContent, ...] = (),
     ) -> Turn:
         """Drive one turn, streaming text deltas to ``on_text`` as they arrive,
         announcing each tool call to ``on_tool_call`` before it runs, each
-        :class:`ToolResult` to ``on_tool_result`` once it has, and the running
-        :class:`Usage` to ``on_usage`` after each model call."""
+        :class:`ToolResult` to ``on_tool_result`` once it has, the running
+        :class:`Usage` to ``on_usage`` after each model call, and the running
+        :class:`TokenBudget` to ``on_budget`` alongside it."""
         return self._drive(
             user_input,
             lambda: self._stream_completion(on_text),
             on_tool_call=on_tool_call,
             on_tool_result=on_tool_result,
             on_usage=on_usage,
+            on_budget=on_budget,
             images=images,
         )
 
@@ -99,6 +104,7 @@ class Agent:
         on_tool_call: Callable[[ToolCall], None] | None = None,
         on_tool_result: Callable[[ToolResult], None] | None = None,
         on_usage: Callable[[Usage], None] | None = None,
+        on_budget: Callable[[TokenBudget], None] | None = None,
         *,
         images: tuple[ImageContent, ...] = (),
     ) -> Turn:
@@ -110,6 +116,8 @@ class Agent:
             usage += completion.usage
             if on_usage is not None:
                 on_usage(usage)
+            if on_budget is not None:
+                on_budget(self._reported_budget(completion.usage))
             self._history.append(
                 Message.assistant(
                     content=completion.text,
@@ -120,7 +128,7 @@ class Agent:
             if not completion.tool_calls:
                 return Turn(
                     final_text=completion.text,
-                    messages=tuple(self._history[turn_start:]),
+                    messages=self._history.since(turn_start),
                     usage=usage,
                 )
             for call in completion.tool_calls:
@@ -147,8 +155,27 @@ class Agent:
             raise AgentError("provider stream ended without a completion")
         return final
 
+    def budget(self) -> TokenBudget:
+        """The exact current context budget, counting the live conversation.
+
+        Unlike the per-step ``on_budget`` signal (which rides on the usage each
+        completion reports), this asks the provider to count tokens and so may
+        call the provider's API (ADR-0004) — invoke it deliberately, not on
+        every render.
+        """
+        return TokenBudget(
+            limit=self._provider.context_window,
+            used=self._provider.count_tokens(self._conversation(), self._specs()),
+        )
+
+    def _reported_budget(self, usage: Usage) -> TokenBudget:
+        return TokenBudget(
+            limit=self._provider.context_window,
+            used=usage.input_tokens + usage.output_tokens,
+        )
+
     def _conversation(self) -> list[Message]:
-        return [Message.system(self._system_prompt), *self._history]
+        return [Message.system(self._system_prompt), *self._history.messages]
 
     def _specs(self) -> list[ToolSpec]:
         return [tool.spec for tool in self._tools.values()]

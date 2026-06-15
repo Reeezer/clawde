@@ -90,6 +90,30 @@ class Usage(_Frozen):
         )
 
 
+class TokenBudget(_Frozen):
+    """How much of the model's context window the conversation occupies.
+
+    ``limit`` is the active model's window (``ModelProvider.context_window``);
+    ``used`` is the input-token cost of the conversation right now. The signal
+    Phase 4 compaction acts on (ADR-0004).
+    """
+
+    limit: int
+    used: int
+
+    @property
+    def remaining(self) -> int:
+        """Input tokens still free before the window is full (never negative)."""
+        return max(self.limit - self.used, 0)
+
+    @property
+    def fraction(self) -> float:
+        """Share of the window used — may exceed 1.0 when over budget."""
+        if self.limit <= 0:
+            return 1.0
+        return self.used / self.limit
+
+
 class ImageContent(_Frozen):
     """An image attached to a user message: raw bytes plus their media type.
 

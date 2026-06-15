@@ -256,6 +256,62 @@ def test_stream_assembles_tool_calls_from_fragments(monkeypatch: pytest.MonkeyPa
     assert final.tool_calls[0].arguments == {"command": "ls"}
 
 
+# --- context window & token counting ------------------------------------------
+
+
+class _CharEncoding:
+    """Stand-in tiktoken encoding: one token per character (deterministic, offline)."""
+
+    def encode(self, text: str) -> list[int]:
+        return [0] * len(text)
+
+
+def test_count_tokens_sums_encoded_messages_and_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    import tiktoken
+
+    monkeypatch.setattr(tiktoken, "encoding_for_model", lambda _model: _CharEncoding())
+    provider = OpenAICompatibleProvider(api_key="key", model="gpt-4o-mini")
+    spec = ToolSpec(name="ab", description="cd", parameters={})  # "ab"+"cd"+"{}" -> 6 chars
+
+    counted = provider.count_tokens([Message.user("hello")], [spec])
+
+    assert counted == (5 + 4) + 6  # "hello" + per-message framing, then the tool schema
+
+
+def test_count_tokens_falls_back_to_o200k_for_unknown_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tiktoken
+
+    def unknown(_model: str) -> object:
+        raise KeyError("unknown model")
+
+    monkeypatch.setattr(tiktoken, "encoding_for_model", unknown)
+    monkeypatch.setattr(tiktoken, "get_encoding", lambda _name: _CharEncoding())
+    provider = OpenAICompatibleProvider(api_key="key", model="mystery-model")
+
+    assert provider.count_tokens([Message.user("hi")], []) == 2 + 4  # 2 chars + framing
+
+
+def test_ensure_tiktoken_passes_when_installed() -> None:
+    openai_module._ensure_tiktoken()
+
+
+def test_ensure_tiktoken_raises_friendly_error_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "tiktoken":
+            raise ImportError("no tiktoken")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(ProviderError, match="tiktoken"):
+        openai_module._ensure_tiktoken()
+
+
 # --- reasoning effort ---------------------------------------------------------
 
 
@@ -344,3 +400,14 @@ def test_openai_live_round_trip() -> None:
 
     assert "pong" in completion.text.lower()
     assert completion.usage.total > 0
+
+
+@pytest.mark.integration
+def test_count_tokens_with_the_real_encoder() -> None:
+    # No API key needed — tiktoken is local; the marker keeps the one-off vocabulary
+    # download out of the default offline suite (ADR-0004).
+    provider = OpenAICompatibleProvider(api_key="key", model="gpt-4o-mini")
+
+    counted = provider.count_tokens([Message.user("hello world")], [])
+
+    assert counted > 0

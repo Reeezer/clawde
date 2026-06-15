@@ -53,6 +53,19 @@ class JsonToolCallingProvider(ModelProvider):
         text, tool_calls = _parse(completion.text)
         return Completion(text=text, tool_calls=tool_calls, usage=completion.usage)
 
+    @property
+    def context_window(self) -> int:
+        return self._inner.context_window
+
+    def count_tokens(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+        """Count the *shaped* conversation the inner provider actually receives.
+
+        The wrapper rewrites messages (protocol prompt, flattened tool calls) and
+        sends no native tools, so it counts ``_shape(...)`` with an empty tool list
+        to match what :meth:`complete` sends.
+        """
+        return self._inner.count_tokens(_shape(messages, tools), [])
+
 
 def _shape(messages: Sequence[Message], tools: Sequence[ToolSpec]) -> list[Message]:
     """Rewrite the conversation for a model with no native tool support."""

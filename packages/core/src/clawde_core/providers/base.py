@@ -20,6 +20,21 @@ class ProviderError(RuntimeError):
     """A model backend could not be reached or returned an unusable response."""
 
 
+DEFAULT_CONTEXT_WINDOW = 128_000
+"""Conservative fallback window for a provider that doesn't know its model's."""
+
+_CHARS_PER_TOKEN = 4
+
+
+def _estimate_tokens(messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+    """A cheap, offline token estimate: ~4 characters per token plus per-message
+    framing. The :class:`ModelProvider` fallback when no exact counter exists
+    (ADR-0004)."""
+    text = "".join(message.content for message in messages)
+    text += "".join(tool.name + tool.description + str(tool.parameters) for tool in tools)
+    return len(text) // _CHARS_PER_TOKEN + len(messages)
+
+
 class ModelProvider(ABC):
     """Adapts one model backend to clawde's typed message / tool / usage models.
 
@@ -84,6 +99,24 @@ class ModelProvider(ABC):
         Providers with a streaming API (e.g. Gemini) override this.
         """
         yield StreamChunk(completion=self.complete(messages, tools))
+
+    @property
+    def context_window(self) -> int:
+        """The active model's maximum input tokens.
+
+        Conservative fallback; a provider that knows its model's real window
+        overrides this (ADR-0004).
+        """
+        return DEFAULT_CONTEXT_WINDOW
+
+    def count_tokens(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+        """Estimate the token cost of sending ``messages`` and ``tools``.
+
+        Default: an offline ~4-chars-per-token heuristic. Real providers override
+        with their exact tokenizer — Anthropic / Gemini count endpoints, or
+        ``tiktoken`` for OpenAI-compatible (ADR-0004).
+        """
+        return _estimate_tokens(messages, tools)
 
     def _reject_image_input(self, messages: Sequence[Message]) -> None:
         """Raise if any message carries images this backend can't send.

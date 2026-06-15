@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
 DEFAULT_MODEL = "claude-opus-4-8"
 DEFAULT_MAX_TOKENS = 8192
+# All current Claude models share a 200k-token input window (ADR-0004).
+_CONTEXT_WINDOW = 200_000
 
 # untyped: the anthropic SDK's create()/stream() take TypedDict params; clawde
 # builds the equivalent wire dicts and lets the SDK validate them at the boundary.
@@ -91,12 +93,25 @@ class AnthropicProvider(ModelProvider):
             final = stream.get_final_message()
         yield StreamChunk(completion=_to_completion(final))
 
+    @property
+    def context_window(self) -> int:
+        return _CONTEXT_WINDOW
+
+    def count_tokens(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+        """Exact, server-side count via the Anthropic ``messages.count_tokens`` API.
+
+        An on-demand call (ADR-0004): the hot loop budgets on reported usage, so
+        this counter only runs when an exact figure is asked for (``Agent.budget``).
+        """
+        counted = self._client().messages.count_tokens(**self._base_request(messages, tools))
+        return counted.input_tokens
+
     def _request(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> _Wire:
-        request: _Wire = {
-            "model": self._model,
-            "max_tokens": self._max_tokens,
-            "messages": _to_messages(messages),
-        }
+        return {**self._base_request(messages, tools), "max_tokens": self._max_tokens}
+
+    def _base_request(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> _Wire:
+        """The wire fields shared by ``messages.create`` and ``messages.count_tokens``."""
+        request: _Wire = {"model": self._model, "messages": _to_messages(messages)}
         system = _system(messages)
         if system:
             request["system"] = system

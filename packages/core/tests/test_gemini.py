@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import logging
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,9 +20,15 @@ if TYPE_CHECKING:
 
 
 class _FakeModels:
-    def __init__(self, response: object = None, chunks: list[object] | None = None) -> None:
+    def __init__(
+        self,
+        response: object = None,
+        chunks: list[object] | None = None,
+        count: object = None,
+    ) -> None:
         self.response = response
         self.chunks = chunks
+        self.count = count
         self.calls: list[dict[str, object]] = []
 
     def generate_content(self, *, model: str, contents: object, config: object) -> object:
@@ -32,20 +39,30 @@ class _FakeModels:
         self.calls.append({"model": model, "contents": contents, "config": config})
         return iter(self.chunks or [])
 
+    def count_tokens(self, *, model: str, contents: object) -> object:
+        self.calls.append({"model": model, "contents": contents})
+        return self.count
+
 
 class _FakeClient:
-    def __init__(self, response: object = None, chunks: list[object] | None = None) -> None:
-        self.models = _FakeModels(response, chunks)
+    def __init__(
+        self,
+        response: object = None,
+        chunks: list[object] | None = None,
+        count: object = None,
+    ) -> None:
+        self.models = _FakeModels(response, chunks, count)
 
 
 def _install_fake_client(
     monkeypatch: pytest.MonkeyPatch,
     response: object = None,
     chunks: list[object] | None = None,
+    count: object = None,
 ) -> tuple[_FakeClient, dict[str, int]]:
     from google import genai
 
-    client = _FakeClient(response, chunks)
+    client = _FakeClient(response, chunks, count)
     created = {"count": 0}
 
     def factory(**kwargs: object) -> _FakeClient:
@@ -414,6 +431,30 @@ def test_stream_collects_function_calls_without_text(monkeypatch: pytest.MonkeyP
     assert final.usage == Usage()
 
 
+# --- context window & token counting ------------------------------------------
+
+
+def test_context_window_is_the_gemini_window() -> None:
+    assert GeminiProvider(api_key="k", model=DEFAULT_MODEL).context_window == 1_048_576
+
+
+def test_count_tokens_calls_the_api_and_returns_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _install_fake_client(monkeypatch, count=SimpleNamespace(total_tokens=321))
+    provider = GeminiProvider(api_key="key", model="gemini-2.5-flash")
+
+    counted = provider.count_tokens([Message.user("hi")], [])
+
+    assert counted == 321
+    assert client.models.calls[0]["model"] == "gemini-2.5-flash"
+
+
+def test_count_tokens_treats_a_missing_total_as_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_client(monkeypatch, count=SimpleNamespace(total_tokens=None))
+    provider = GeminiProvider(api_key="key", model=DEFAULT_MODEL)
+
+    assert provider.count_tokens([Message.user("hi")], []) == 0
+
+
 def test_stream_captures_function_call_thought_signature(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -499,6 +540,20 @@ def test_gemini_live_round_trip() -> None:
 
     assert "pong" in completion.text.lower()
     assert completion.usage.total > 0
+
+
+@pytest.mark.integration
+def test_gemini_live_count_tokens() -> None:
+    from clawde_core.config import get_settings
+
+    api_key = get_settings().providers.gemini.api_key
+    if not api_key:
+        pytest.skip("no Gemini API key configured")
+    provider = GeminiProvider(api_key=api_key, model=DEFAULT_MODEL)
+
+    counted = provider.count_tokens([Message.user("count the tokens in this sentence")], [])
+
+    assert counted > 0
 
 
 def _solid_png(rgb: tuple[int, int, int], size: int = 8) -> bytes:

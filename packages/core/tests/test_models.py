@@ -11,6 +11,7 @@ from clawde_core.models import (
     Role,
     StreamChunk,
     ThinkingBlock,
+    TokenBudget,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -154,3 +155,23 @@ def test_tool_spec() -> None:
     assert spec.parameters["type"] == "object"
     spec_default = ToolSpec(name="noop", description="d")
     assert spec_default.parameters == {}
+
+
+def test_token_budget_remaining_is_window_minus_used() -> None:
+    assert TokenBudget(limit=1000, used=300).remaining == 700
+
+
+def test_token_budget_remaining_never_goes_negative() -> None:
+    assert TokenBudget(limit=1000, used=1500).remaining == 0
+
+
+def test_token_budget_fraction_is_share_of_window() -> None:
+    assert TokenBudget(limit=1000, used=250).fraction == 0.25
+
+
+def test_token_budget_fraction_exceeds_one_when_over_budget() -> None:
+    assert TokenBudget(limit=1000, used=1200).fraction == 1.2
+
+
+def test_token_budget_fraction_is_full_when_window_is_zero() -> None:
+    assert TokenBudget(limit=0, used=0).fraction == 1.0

@@ -33,8 +33,13 @@ if TYPE_CHECKING:
     from openai import OpenAI
     from openai.types.chat import ChatCompletion
     from openai.types.completion_usage import CompletionUsage
+    from tiktoken import Encoding
 
 DEFAULT_MODEL = "gpt-4o-mini"
+# tiktoken framing/fallback for count_tokens (ADR-0004). The gpt-4o family's 128k
+# context window equals the ABC default, so context_window is inherited, not set.
+_TOKENS_PER_MESSAGE = 4  # ~per-message framing overhead (role + delimiters)
+_FALLBACK_ENCODING = "o200k_base"  # gpt-4o family encoding, for unknown model ids
 
 # clawde's normalised effort → OpenAI's ``reasoning_effort``. OpenAI's reasoning
 # models accept low / medium / high only — no xhigh or max — so those higher
@@ -112,6 +117,23 @@ class OpenAICompatibleProvider(ModelProvider):
             )
         )
 
+    def count_tokens(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+        """Exact, local count via ``tiktoken`` — no API call (ADR-0004).
+
+        Sums the encoded message contents (plus a small per-message framing
+        constant) and the encoded tool schemas. Framing overhead is approximate;
+        the budget is a guardrail, not a billing figure.
+        """
+        encoding = _encoding_for(self._model)
+        total = sum(
+            len(encoding.encode(message.content)) + _TOKENS_PER_MESSAGE for message in messages
+        )
+        total += sum(
+            len(encoding.encode(spec.name + spec.description + json.dumps(spec.parameters)))
+            for spec in tools
+        )
+        return total
+
     def _request(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> _Wire:
         request: _Wire = {"model": self._model, "messages": _to_messages(messages)}
         rendered = _to_tools(tools)
@@ -139,6 +161,27 @@ def _ensure_sdk() -> None:
         raise ProviderError(
             "OpenAI-compatible support needs the optional extra: install 'clawde-core[openai]'."
         ) from exc
+
+
+def _ensure_tiktoken() -> None:
+    """Confirm ``tiktoken`` is importable; raise a friendly error if not."""
+    try:
+        import tiktoken  # noqa: F401
+    except ImportError as exc:
+        raise ProviderError(
+            "OpenAI token counting needs 'tiktoken': install 'clawde-core[openai]'."
+        ) from exc
+
+
+def _encoding_for(model: str) -> Encoding:
+    """The model's ``tiktoken`` encoding, falling back to o200k_base for unknown ids."""
+    _ensure_tiktoken()
+    import tiktoken
+
+    try:
+        return tiktoken.encoding_for_model(model)
+    except KeyError:
+        return tiktoken.get_encoding(_FALLBACK_ENCODING)
 
 
 def _to_messages(messages: Sequence[Message]) -> list[_Wire]:

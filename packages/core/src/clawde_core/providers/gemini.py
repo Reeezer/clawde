@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from google.genai import types
 
 DEFAULT_MODEL = "gemini-2.5-flash"
+# Gemini 2.5 Flash/Pro expose a ~1,048,576-token (1M) input window (ADR-0004).
+_CONTEXT_WINDOW = 1_048_576
 
 # clawde's normalised effort → Gemini's ``ThinkingLevel`` name (kept as a string
 # so the SDK enum stays a lazy import). thinking_level is a Gemini-3 control that
@@ -100,6 +102,22 @@ class GeminiProvider(ModelProvider):
                 usage=_to_usage(usage),
             )
         )
+
+    @property
+    def context_window(self) -> int:
+        return _CONTEXT_WINDOW
+
+    def count_tokens(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+        """Exact count via Gemini's ``models.count_tokens`` API (ADR-0004).
+
+        Counts the conversation turns; the system instruction and tool schemas are
+        a small, deliberately omitted remainder — the budget is a guardrail, not a
+        billing figure. An on-demand call: the hot loop budgets on reported usage.
+        """
+        counted = self._client().models.count_tokens(
+            model=self._model, contents=_to_contents(messages)
+        )
+        return counted.total_tokens or 0
 
     def _thinking_level(self) -> str | None:
         """Resolve the current effort to a Gemini ThinkingLevel name (``None`` for OFF)."""

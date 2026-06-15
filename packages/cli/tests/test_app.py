@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 from clawde_core.loop import AgentError, Turn
-from clawde_core.models import ImageContent, ReasoningEffort, ToolCall, ToolResult, Usage
+from clawde_core.models import (
+    ImageContent,
+    ReasoningEffort,
+    TokenBudget,
+    ToolCall,
+    ToolResult,
+    Usage,
+)
 from clawde_core.providers.base import ProviderError
 from clawde_core.registry import RegistryError
 from typer.testing import CliRunner
@@ -23,11 +30,14 @@ def _install_provider(
     """Replace the factory with a stub; return a list recording how it was called."""
     seen: list[dict[str, str | None]] = []
 
+    class _StubProvider:
+        context_window = 1_048_576  # app reads this to seed the spinner's ctx window
+
     def fake_build_provider(provider: str | None = None, model: str | None = None) -> object:
         seen.append({"provider": provider, "model": model})
         if error is not None:
             raise error
-        return object()  # the faked Agent ignores the provider object
+        return _StubProvider()  # the faked Agent ignores it; app reads context_window
 
     monkeypatch.setattr(app_module, "build_provider", fake_build_provider)
     return seen
@@ -39,6 +49,7 @@ def _fake_agent_class(
     deltas: tuple[str, ...] = (),
     tool_calls: tuple[ToolCall, ...] = (),
     record_images: list[ImageContent] | None = None,
+    budget: TokenBudget | None = None,
 ) -> type:
     class _FakeAgent:
         def __init__(
@@ -58,6 +69,7 @@ def _fake_agent_class(
             on_tool_call: Callable[[ToolCall], None] | None = None,
             on_tool_result: Callable[[ToolResult], None] | None = None,
             on_usage: Callable[[Usage], None] | None = None,
+            on_budget: Callable[[TokenBudget], None] | None = None,
             *,
             images: tuple[ImageContent, ...] = (),
         ) -> Turn:
@@ -74,6 +86,8 @@ def _fake_agent_class(
                     on_tool_result(ToolResult(tool_call_id=call.id, content="ran ok"))
             if on_usage is not None:
                 on_usage(Usage(output_tokens=4))
+            if on_budget is not None and budget is not None:
+                on_budget(budget)
             assert turn is not None
             return turn
 
@@ -149,7 +163,27 @@ def test_streams_text_and_tool_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert "here are the files" in result.stdout  # streamed deltas
     assert "bash" in result.stdout  # tool-call trace
-    assert "7 tokens" in result.stdout  # closing summary
+    assert "↑ 3 ↓ 4 tokens" in result.stdout  # closing summary (sent / received)
+
+
+def test_summary_shows_the_context_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(monkeypatch)
+    turn = Turn(
+        final_text="ok",
+        messages=(),
+        usage=Usage(input_tokens=52000, output_tokens=1200),
+    )
+    agent_cls = _fake_agent_class(
+        turn=turn,
+        deltas=("ok",),
+        budget=TokenBudget(limit=1_048_576, used=35000),
+    )
+    monkeypatch.setattr(app_module, "Agent", agent_cls)
+
+    result = runner.invoke(app, ["list files"])
+
+    assert result.exit_code == 0
+    assert "ctx 35.0k/1M · ↑ 52.0k ↓ 1.2k tokens" in result.stdout  # ctx joins the summary
 
 
 def test_provider_and_model_flags_reach_the_factory(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,6 +201,8 @@ def test_effort_flag_sets_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> N
     recorded: list[ReasoningEffort] = []
 
     class _Recorder:
+        context_window = 1_048_576  # app reads this to seed the spinner's ctx window
+
         def set_reasoning_effort(self, effort: ReasoningEffort) -> None:
             recorded.append(effort)
 

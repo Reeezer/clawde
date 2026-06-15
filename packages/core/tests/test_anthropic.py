@@ -24,9 +24,12 @@ from clawde_core.providers.base import ProviderError
 
 
 class _FakeMessages:
-    def __init__(self, response: object = None, stream: object = None) -> None:
+    def __init__(
+        self, response: object = None, stream: object = None, count: object = None
+    ) -> None:
         self._response = response
         self._stream = stream
+        self._count = count
         # untyped: records the SDK kwargs (TypedDict wire dicts) for assertions.
         self.calls: list[dict[str, Any]] = []
 
@@ -38,18 +41,27 @@ class _FakeMessages:
         self.calls.append(dict(kwargs))
         return self._stream
 
+    def count_tokens(self, **kwargs: object) -> object:
+        self.calls.append(dict(kwargs))
+        return self._count
+
 
 class _FakeClient:
-    def __init__(self, response: object = None, stream: object = None) -> None:
-        self.messages = _FakeMessages(response, stream)
+    def __init__(
+        self, response: object = None, stream: object = None, count: object = None
+    ) -> None:
+        self.messages = _FakeMessages(response, stream, count)
 
 
 def _install(
-    monkeypatch: pytest.MonkeyPatch, response: object = None, stream: object = None
+    monkeypatch: pytest.MonkeyPatch,
+    response: object = None,
+    stream: object = None,
+    count: object = None,
 ) -> tuple[_FakeClient, dict[str, int]]:
     import anthropic
 
-    client = _FakeClient(response, stream)
+    client = _FakeClient(response, stream, count)
     created = {"count": 0}
 
     def factory(**kwargs: object) -> _FakeClient:
@@ -245,6 +257,30 @@ def test_stream_yields_deltas_then_final_completion(monkeypatch: pytest.MonkeyPa
     assert client.messages.calls[0]["model"] == "claude-test"
 
 
+# --- context window & token counting ------------------------------------------
+
+
+def test_context_window_is_the_claude_window() -> None:
+    assert AnthropicProvider(api_key="k").context_window == 200_000
+
+
+def test_count_tokens_calls_the_api_and_returns_input_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _install(monkeypatch, count=SimpleNamespace(input_tokens=1234))
+    provider = AnthropicProvider(api_key="key", model="claude-test")
+    spec = ToolSpec(name="bash", description="run", parameters={"type": "object"})
+
+    counted = provider.count_tokens([Message.system("be brief"), Message.user("hi")], [spec])
+
+    assert counted == 1234
+    sent = client.messages.calls[0]
+    assert sent["model"] == "claude-test"
+    assert "max_tokens" not in sent  # the count endpoint takes no max_tokens
+    assert sent["system"] == "be brief"
+    assert sent["tools"][0]["name"] == "bash"
+
+
 # --- registry builder ---------------------------------------------------------
 
 
@@ -361,3 +397,17 @@ def test_anthropic_live_round_trip() -> None:
 
     assert "pong" in completion.text.lower()
     assert completion.usage.total > 0
+
+
+@pytest.mark.integration
+def test_anthropic_live_count_tokens() -> None:
+    from clawde_core.config import get_settings
+
+    api_key = get_settings().providers.anthropic.api_key
+    if not api_key:
+        pytest.skip("no Anthropic API key configured")
+    provider = AnthropicProvider(api_key=api_key)
+
+    counted = provider.count_tokens([Message.user("count the tokens in this sentence")], [])
+
+    assert counted > 0

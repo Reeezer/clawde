@@ -95,7 +95,7 @@ def _run_turn(
         model_provider.set_reasoning_effort(effort)
     agent = Agent(model_provider, build_tools(get_settings()), system_prompt=_system_prompt())
     renderer = ReplyRenderer(console)
-    renderer.begin()
+    renderer.begin(model_provider.context_window)
     try:
         turn = agent.stream_turn(
             prompt,
@@ -103,6 +103,7 @@ def _run_turn(
             on_tool_call=renderer.on_tool_call,
             on_tool_result=renderer.on_tool_result,
             on_usage=renderer.on_usage,
+            on_budget=renderer.on_budget,
             images=images,
         )
     except (ProviderError, AgentError) as exc:
@@ -111,7 +112,7 @@ def _run_turn(
         raise typer.Exit(code=1) from exc
     renderer.finish()
     console.print()  # blank line before the closing summary
-    console.print(format_summary(renderer.elapsed(), turn.usage.total))
+    console.print(format_summary(renderer.elapsed(), turn.usage, renderer.context_budget()))
 
 
 def _load_images(paths: Sequence[Path]) -> tuple[ImageContent, ...]:

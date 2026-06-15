@@ -108,6 +108,45 @@ def test_stream_uses_the_base_default_and_still_parses_calls() -> None:
     assert [c.name for c in final.tool_calls] == ["bash"]
 
 
+# --- context window & token counting delegation ------------------------------
+
+
+class _WindowingInner(ModelProvider):
+    """Inner provider with a distinctive window + a recording token counter."""
+
+    def __init__(self) -> None:
+        self.counted: tuple[tuple[Message, ...], tuple[ToolSpec, ...]] | None = None
+
+    def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> Completion:
+        return Completion()
+
+    @property
+    def context_window(self) -> int:
+        return 4242
+
+    def count_tokens(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> int:
+        self.counted = (tuple(messages), tuple(tools))
+        return 77
+
+
+def test_context_window_delegates_to_the_inner_provider() -> None:
+    assert JsonToolCallingProvider(_WindowingInner()).context_window == 4242
+
+
+def test_count_tokens_counts_the_shaped_conversation_with_no_native_tools() -> None:
+    inner = _WindowingInner()
+
+    counted = JsonToolCallingProvider(inner).count_tokens(
+        [Message.system("sys"), Message.user("hi")], [_SPEC]
+    )
+
+    assert counted == 77
+    assert inner.counted is not None
+    shaped_messages, shaped_tools = inner.counted
+    assert shaped_tools == ()  # native tools suppressed; the convention lives in the prompt
+    assert "bash" in shaped_messages[0].content  # the shaped system prompt advertises the tool
+
+
 def test_reasoning_effort_delegates_to_the_inner_provider() -> None:
     inner = _Inner(Completion(text="ok"))
     wrapper = JsonToolCallingProvider(inner)
